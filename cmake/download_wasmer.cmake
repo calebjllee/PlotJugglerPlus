@@ -48,6 +48,10 @@ function(download_wasmer)
   endif()
 
   set(WASMER_STATIC_LIBRARY_NAME ${CMAKE_STATIC_LIBRARY_PREFIX}wasmer${CMAKE_STATIC_LIBRARY_SUFFIX})
+  if(WIN32)
+    set(WASMER_HEADLESS_STATIC_LIBRARY_NAME
+        ${CMAKE_STATIC_LIBRARY_PREFIX}wasmer-headless${CMAKE_STATIC_LIBRARY_SUFFIX})
+  endif()
   message(STATUS "WASMER_URL: ${WASMER_URL}")
 
   cpmaddpackage(NAME wasmer
@@ -57,11 +61,17 @@ function(download_wasmer)
 
   add_library(wasmer::wasmer INTERFACE IMPORTED)
 
-  if(NOT EXISTS ${wasmer_SOURCE_DIR}/lib/${WASMER_STATIC_LIBRARY_NAME})
-    message(ERROR "wasmer library not found: ${wasmer_SOURCE_DIR}/lib/${WASMER_STATIC_LIBRARY_NAME}")
+  if(WIN32 AND EXISTS ${wasmer_SOURCE_DIR}/lib/${WASMER_HEADLESS_STATIC_LIBRARY_NAME})
+    set(WASMER_LIBRARY_PATH ${wasmer_SOURCE_DIR}/lib/${WASMER_HEADLESS_STATIC_LIBRARY_NAME})
+  else()
+    set(WASMER_LIBRARY_PATH ${wasmer_SOURCE_DIR}/lib/${WASMER_STATIC_LIBRARY_NAME})
   endif()
 
-  set(WASMER_LINK_LIBRARIES ${wasmer_SOURCE_DIR}/lib/${WASMER_STATIC_LIBRARY_NAME})
+  if(NOT EXISTS ${WASMER_LIBRARY_PATH})
+    message(ERROR "wasmer library not found: ${WASMER_LIBRARY_PATH}")
+  endif()
+
+  set(WASMER_LINK_LIBRARIES ${WASMER_LIBRARY_PATH})
   set(WASMER_COMPILE_DEFINITIONS "")
 
   if(WIN32)

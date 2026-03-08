@@ -110,8 +110,15 @@ QDomElement saveChildNodesState(QDomDocument& doc, QWidget* widget)
         auto dock_widget = dynamic_cast<DockWidget*>(dockArea->dockWidget(i));
         if (dock_widget)
         {
-          auto plotwidget_elem = dock_widget->plotWidget()->xmlSaveState(doc);
-          area_elem.appendChild(plotwidget_elem);
+          if (auto plot_widget = dock_widget->plotWidget())
+          {
+            auto plotwidget_elem = plot_widget->xmlSaveState(doc);
+            area_elem.appendChild(plotwidget_elem);
+          }
+          else if (auto map_panel = dock_widget->mapPanel())
+          {
+            area_elem.appendChild(map_panel->xmlSaveState(doc));
+          }
           area_elem.setAttribute("name", dock_widget->toolBar()->label()->text());
         }
       }
@@ -185,7 +192,19 @@ void PlotDocker::restoreSplitter(QDomElement elem, DockWidget* widget)
     if (child_elem.tagName() == "DockArea")
     {
       auto plot_elem = child_elem.firstChildElement("plot");
-      widgets[index]->plotWidget()->xmlLoadState(plot_elem);
+      if (!plot_elem.isNull() && widgets[index]->plotWidget())
+      {
+        widgets[index]->plotWidget()->xmlLoadState(plot_elem);
+      }
+      auto map_elem = child_elem.firstChildElement("map_panel");
+      if (!map_elem.isNull())
+      {
+        widgets[index]->convertToMapPanel();
+        if (widgets[index]->mapPanel())
+        {
+          widgets[index]->mapPanel()->xmlLoadState(map_elem);
+        }
+      }
       if (child_elem.hasAttribute("name"))
       {
         QString area_name = child_elem.attribute("name");
@@ -241,7 +260,13 @@ int PlotDocker::plotCount() const
 PlotWidget* PlotDocker::plotAt(int index)
 {
   DockWidget* dock_widget = dynamic_cast<DockWidget*>(dockArea(index)->currentDockWidget());
-  return static_cast<PlotWidget*>(dock_widget->plotWidget());
+  return dock_widget ? dock_widget->plotWidget() : nullptr;
+}
+
+MapDockPanel* PlotDocker::mapPanelAt(int index)
+{
+  DockWidget* dock_widget = dynamic_cast<DockWidget*>(dockArea(index)->currentDockWidget());
+  return dock_widget ? dock_widget->mapPanel() : nullptr;
 }
 
 void PlotDocker::setHorizontalLink(bool enabled)
@@ -253,7 +278,10 @@ void PlotDocker::zoomOut()
 {
   for (int index = 0; index < plotCount(); index++)
   {
-    plotAt(index)->zoomOut(false);  // TODO is it false?
+    if (auto plot = plotAt(index))
+    {
+      plot->zoomOut(false);  // TODO is it false?
+    }
   }
 }
 
@@ -261,7 +289,10 @@ void PlotDocker::replot()
 {
   for (int index = 0; index < plotCount(); index++)
   {
-    plotAt(index)->replot();
+    if (auto plot = plotAt(index))
+    {
+      plot->replot();
+    }
   }
 }
 
@@ -307,7 +338,10 @@ void PlotDocker::savePlotsToFile()
 
     const auto plot_footprint = plotRelativeFootprint(index, plot_size);
     auto* plot_at = plotAt(index);
-    plot_at->plotOn(save_plots_helper, plot_footprint);
+    if (plot_at)
+    {
+      plot_at->plotOn(save_plots_helper, plot_footprint);
+    }
 
     const static float title_margin = 10.f;
     const auto title_footprint =
@@ -347,6 +381,12 @@ DockWidget::DockWidget(PlotDataMapRef& datamap, QWidget* parent)
 
   connect(_plot_widget, &PlotWidget::splitVertical, this, &DockWidget::splitVertical);
 
+  connect(_plot_widget, &PlotWidget::createMapSplitRequested, this,
+          &DockWidget::createMapPanelSplit);
+
+  connect(_plot_widget, &PlotWidget::convertToMapPanelRequested, this,
+          &DockWidget::convertToMapPanel);
+
   connect(_toolbar, &DockToolbar::titleChanged, _plot_widget,
           [this](QString title) { _plot_widget->setStatisticsTitle(title); });
 
@@ -372,8 +412,16 @@ DockWidget::DockWidget(PlotDataMapRef& datamap, QWidget* parent)
   QObject::connect(_toolbar->buttonClose(), &QPushButton::pressed, [this]() {
     dockAreaWidget()->closeArea();
     takeWidget();
-    _plot_widget->deleteLater();
-    _plot_widget = nullptr;
+    if (_plot_widget)
+    {
+      _plot_widget->deleteLater();
+      _plot_widget = nullptr;
+    }
+    if (_map_panel)
+    {
+      _map_panel->deleteLater();
+      _map_panel = nullptr;
+    }
     this->undoableChange();
   });
 
@@ -421,9 +469,48 @@ DockWidget* DockWidget::splitVertical()
   return new_widget;
 }
 
+void DockWidget::createMapPanelSplit()
+{
+  auto new_widget = splitHorizontal();
+  if (new_widget)
+  {
+    new_widget->convertToMapPanel();
+  }
+}
+
 PlotWidget* DockWidget::plotWidget()
 {
   return _plot_widget;
+}
+
+MapDockPanel* DockWidget::mapPanel()
+{
+  return _map_panel;
+}
+
+bool DockWidget::isMapPanel() const
+{
+  return (_map_panel != nullptr);
+}
+
+void DockWidget::convertToMapPanel()
+{
+  if (_map_panel)
+  {
+    return;
+  }
+
+  _map_panel = new MapDockPanel(_datamap, this);
+  setWidget(_map_panel);
+
+  if (_plot_widget)
+  {
+    _plot_widget->deleteLater();
+    _plot_widget = nullptr;
+  }
+
+  _toolbar->label()->setText("Map");
+  undoableChange();
 }
 
 DockToolbar* DockWidget::toolBar()

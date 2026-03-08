@@ -127,6 +127,8 @@ PlotWidget::PlotWidget(PlotDataMapRef& datamap, QWidget* parent)
 
 PlotWidget::~PlotWidget()
 {
+  delete _action_new_map_split;
+  delete _action_convert_to_map;
   delete _action_split_horizontal;
   delete _action_split_vertical;
   delete _action_removeAllCurves;
@@ -166,6 +168,14 @@ void PlotWidget::buildActions()
       emit undoableChange();
     }
   });
+
+  _action_new_map_split = new QAction("&Add Map View", this);
+  connect(_action_new_map_split, &QAction::triggered, this,
+          [this]() { emit createMapSplitRequested(); });
+
+  _action_convert_to_map = new QAction("&Convert to Map panel", this);
+  connect(_action_convert_to_map, &QAction::triggered, this,
+          [this]() { emit convertToMapPanelRequested(); });
 
   _action_split_horizontal = new QAction("&Split Horizontally", this);
   connect(_action_split_horizontal, &QAction::triggered, this, &PlotWidget::splitHorizontal);
@@ -238,6 +248,7 @@ void PlotWidget::canvasContextMenuTriggered(const QPoint& pos)
   _action_removeAllCurves->setIcon(LoadSvg(":/resources/svg/trash.svg", theme));
   _action_edit->setIcon(LoadSvg(":/resources/svg/pencil-edit.svg", theme));
   _action_formula->setIcon(LoadSvg(":/resources/svg/Fx.svg", theme));
+  _action_new_map_split->setIcon(LoadSvg(":/resources/svg/scatter.svg", theme));
   _action_split_horizontal->setIcon(LoadSvg(":/resources/svg/add_column.svg", theme));
   _action_split_vertical->setIcon(LoadSvg(":/resources/svg/add_row.svg", theme));
   _action_zoomOutMaximum->setIcon(LoadSvg(":/resources/svg/zoom_max.svg", theme));
@@ -252,6 +263,11 @@ void PlotWidget::canvasContextMenuTriggered(const QPoint& pos)
 
   menu.addAction(_action_edit);
   menu.addAction(_action_formula);
+  menu.addAction(_action_new_map_split);
+  if (isXYPlot())
+  {
+    menu.addAction(_action_convert_to_map);
+  }
   menu.addSeparator();
   menu.addAction(_action_split_horizontal);
   menu.addAction(_action_split_vertical);

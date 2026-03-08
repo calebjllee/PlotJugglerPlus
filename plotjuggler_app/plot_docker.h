@@ -11,6 +11,7 @@
 #include <QXmlStreamReader>
 #include "PlotJuggler/plotdata.h"
 #include "plotwidget.h"
+#include "map_dock_panel.h"
 #include "plot_docker_toolbar.h"
 
 class DockWidget : public ads::CDockWidget
@@ -23,6 +24,10 @@ public:
   ~DockWidget() override;
 
   PlotWidget* plotWidget();
+  MapDockPanel* mapPanel();
+  bool isMapPanel() const;
+
+  void convertToMapPanel();
 
   DockToolbar* toolBar();
 
@@ -33,8 +38,11 @@ public slots:
 
   DockWidget* splitVertical();
 
+  void createMapPanelSplit();
+
 private:
   PlotWidget* _plot_widget = nullptr;
+  MapDockPanel* _map_panel = nullptr;
 
   DockToolbar* _toolbar;
 
@@ -64,6 +72,7 @@ public:
   int plotCount() const;
 
   PlotWidget* plotAt(int index);
+  MapDockPanel* mapPanelAt(int index);
 
   void setHorizontalLink(bool enabled);
 

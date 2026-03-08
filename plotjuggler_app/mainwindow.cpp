@@ -206,6 +206,12 @@ MainWindow::MainWindow(const QCommandLineParser& commandline_parser, QWidget* pa
 
   _main_tabbed_widget = new TabbedPlotWidget("Main Window", this, _mapped_plot_data, this);
 
+#if PJ_HAS_WEBENGINE
+  qInfo() << "Plot types available: TimeSeries, XY, MapPanel(WebEngine)";
+#else
+  qInfo() << "Plot types available: TimeSeries, XY, MapPanel(no WebEngine)";
+#endif
+
   connect(this, &MainWindow::stylesheetChanged, _main_tabbed_widget,
           &TabbedPlotWidget::on_stylesheetChanged);
 
@@ -486,6 +492,11 @@ void MainWindow::onTrackerTimeUpdated(double absolute_time, bool do_replot)
     it.second->updateState(absolute_time);
   }
 
+  for (auto& it : _plugin_manager.toolboxes())
+  {
+    it.second->onTimeUpdated(absolute_time);
+  }
+
   updateReactivePlots();
 
   forEachWidget([&](PlotWidget* plot) {
@@ -495,6 +506,7 @@ void MainWindow::onTrackerTimeUpdated(double absolute_time, bool do_replot)
       plot->replot();
     }
   });
+  forEachMapPanel([&](MapDockPanel* panel) { panel->onTimeUpdated(_tracker_time); });
 }
 
 void MainWindow::initializeActions()
@@ -572,6 +584,7 @@ void MainWindow::loadAllPlugins(QStringList command_line_plugin_folders)
   builtin_folders +=
       QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/PlotJuggler";
   builtin_folders.removeDuplicates();
+  forEachMapPanel([&](MapDockPanel* panel) { panel->onTimeUpdated(_tracker_time); });
 
   plugin_folders += builtin_folders;
   plugin_folders.removeDuplicates();
@@ -2328,7 +2341,10 @@ void MainWindow::forEachWidget(std::function<void(PlotWidget*, PlotDocker*, int)
       for (int index = 0; index < matrix->plotCount(); index++)
       {
         PlotWidget* plot = matrix->plotAt(index);
-        operation(plot, matrix, index);
+        if (plot)
+        {
+          operation(plot, matrix, index);
+        }
       }
     }
   };
@@ -2342,6 +2358,33 @@ void MainWindow::forEachWidget(std::function<void(PlotWidget*, PlotDocker*, int)
 void MainWindow::forEachWidget(std::function<void(PlotWidget*)> op)
 {
   forEachWidget([&](PlotWidget* plot, PlotDocker*, int) { op(plot); });
+}
+
+void MainWindow::forEachMapPanel(std::function<void(MapDockPanel*)> op)
+{
+  auto func = [&](QTabWidget* tabs) {
+    for (int t = 0; t < tabs->count(); t++)
+    {
+      PlotDocker* matrix = dynamic_cast<PlotDocker*>(tabs->widget(t));
+      if (!matrix)
+      {
+        continue;
+      }
+
+      for (int index = 0; index < matrix->plotCount(); index++)
+      {
+        if (auto panel = matrix->mapPanelAt(index))
+        {
+          op(panel);
+        }
+      }
+    }
+  };
+
+  for (const auto& it : TabbedPlotWidget::instances())
+  {
+    func(it.second->tabWidget());
+  }
 }
 
 void MainWindow::updateTimeSlider()
@@ -2759,10 +2802,17 @@ void MainWindow::onPlaybackLoop()
     it.second->play(_tracker_time);
   }
 
+  for (auto& it : toolboxes())
+  {
+    it.second->onTimeUpdated(_tracker_time);
+  }
+
   forEachWidget([&](PlotWidget* plot) {
     plot->setTrackerPosition(_tracker_time);
     plot->replot();
   });
+
+  forEachMapPanel([&](MapDockPanel* panel) { panel->onTimeUpdated(_tracker_time); });
 }
 
 void MainWindow::onCustomPlotCreated(std::vector<CustomPlotPtr> custom_plots)

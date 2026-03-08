@@ -36,6 +36,11 @@ public:
 
   virtual std::pair<QWidget*, WidgetType> providedWidget() const = 0;
 
+  virtual void onTimeUpdated(double absolute_time)
+  {
+    (void)absolute_time;
+  }
+
   void setParserFactories(ParserFactories* parsers)
   {
     _parser_factories = parsers;

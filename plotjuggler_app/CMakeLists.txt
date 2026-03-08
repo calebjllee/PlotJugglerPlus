@@ -53,6 +53,7 @@ set(PLOTJUGGLER_SRC
     toast_notification.cpp
     toast_manager.cpp
     menubar.cpp
+    map_dock_panel.cpp
     plugin_manager.cpp
     plotwidget.cpp
     plotwidget_editor.cpp
@@ -133,6 +134,14 @@ target_link_libraries(
           fmt::fmt
           lua::lua
         )
+
+find_package(Qt5 COMPONENTS WebEngineWidgets QUIET)
+if(TARGET Qt5::WebEngineWidgets)
+  target_link_libraries(plotjuggler PRIVATE Qt5::WebEngineWidgets)
+  target_compile_definitions(plotjuggler PRIVATE PJ_HAS_WEBENGINE=1)
+else()
+  target_compile_definitions(plotjuggler PRIVATE PJ_HAS_WEBENGINE=0)
+endif()
 
 if(COMPILING_WITH_CATKIN)
   target_link_libraries(plotjuggler PRIVATE ${catkin_LIBRARIES})

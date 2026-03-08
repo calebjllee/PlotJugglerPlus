@@ -99,6 +99,8 @@ signals:
   void swapWidgetsRequested(PlotWidget* source, PlotWidget* destination);
   void rectChanged(PlotWidget* self, QRectF rect);
   void undoableChange();
+  void createMapSplitRequested();
+  void convertToMapPanelRequested();
   void trackerMoved(QPointF pos);
   void curveListChanged();
   void curvesDropped();
@@ -177,6 +179,8 @@ private:
   QAction* _action_removeAllCurves;
   QAction* _action_edit;
   QAction* _action_formula;
+  QAction* _action_new_map_split;
+  QAction* _action_convert_to_map;
   QAction* _action_split_horizontal;
   QAction* _action_split_vertical;
   QAction* _action_data_statistics;

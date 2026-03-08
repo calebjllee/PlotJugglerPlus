@@ -76,3 +76,6 @@ _deps
 
 # CodeQL
 _codeql_detected_source_root
+
+# install (hopefully this doesn't brick things)
+install/*
