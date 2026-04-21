@@ -8,6 +8,7 @@
 #define PLOTLEGEND_H
 
 #include <QObject>
+#include <QMap>
 #include "qwt_plot_legenditem.h"
 #include "qwt_plot.h"
 
@@ -21,7 +22,24 @@ public:
 
   const QwtPlotItem* processMousePressEvent(QMouseEvent* mouse_event);
 
+  const QwtPlotItem* itemAt(const QPoint& canvas_pos) const;
+
+  bool setHoveredItem(const QwtPlotItem* item);
+
+  const QwtPlotItem* hoveredItem() const;
+
+  virtual QRect geometry(const QRectF& canvasRect) const override;
+
 private:
+  struct LayoutData
+  {
+    QRectF legend_rect;
+    QMap<const QwtPlotItem*, QRectF> item_rects;
+    qreal split_x = 0.0;
+  };
+
+  LayoutData computeLayout(const QRectF& canvas_rect) const;
+
   virtual void draw(QPainter* p, const QwtScaleMap& xMap, const QwtScaleMap& yMap,
                     const QRectF& rect) const override;
 
@@ -32,6 +50,7 @@ private:
 
   QwtPlot* _parent_plot;
   bool _collapsed;
+  const QwtPlotItem* _hovered_item = nullptr;
 };
 
 #endif  // PLOTLEGEND_H

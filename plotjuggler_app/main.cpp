@@ -100,8 +100,15 @@ QPixmap getFunnySplashscreen()
   }
 
   settings.setValue("previousFunnyMemesList", new_list);
+  // Try JPG first, fall back to PNG
   auto filename = QString("://resources/memes/meme_%1.jpg").arg(n, 2, 10, QChar('0'));
-  return QPixmap(filename);
+  QPixmap pixmap(filename);
+  if (pixmap.isNull())
+  {
+    filename = QString("://resources/memes/meme_%1.png").arg(n, 2, 10, QChar('0'));
+    pixmap = QPixmap(filename);
+  }
+  return pixmap;
 }
 
 std::vector<std::string> MergeArguments(const std::vector<std::string>& args)
@@ -343,10 +350,18 @@ int main(int argc, char* argv[])
       main_pixmap = getFunnySplashscreen();
     }
 
-    QSplashScreen splash(main_pixmap, Qt::WindowStaysOnTopHint);
     QDesktopWidget* desktop = QApplication::desktop();
     const int scrn = desktop->screenNumber();
-    const QPoint currentDesktopsCenter = desktop->availableGeometry(scrn).center();
+    const QRect screenGeom = desktop->availableGeometry(scrn);
+    // Scale to fit within 50% of the screen, preserving aspect ratio
+    const QSize maxSize = screenGeom.size() * 0.5;
+    if (!main_pixmap.isNull() &&
+        (main_pixmap.width() > maxSize.width() || main_pixmap.height() > maxSize.height()))
+    {
+      main_pixmap = main_pixmap.scaled(maxSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+    QSplashScreen splash(main_pixmap, Qt::WindowStaysOnTopHint);
+    const QPoint currentDesktopsCenter = screenGeom.center();
     splash.move(currentDesktopsCenter - splash.rect().center());
 
     splash.show();

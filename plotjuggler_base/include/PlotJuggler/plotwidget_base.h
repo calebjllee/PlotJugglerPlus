@@ -9,6 +9,8 @@
 
 #include <array>
 #include <QWidget>
+#include "qwt_axis.h"
+#include "qwt_axis_id.h"
 #include "plotdata.h"
 #include "timeseries_qwt.h"
 
@@ -63,6 +65,7 @@ public:
     std::string src_name;
     QwtPlotCurve* curve;
     QwtPlotMarker* marker;
+    QwtAxisId y_axis = QwtAxis::YLeft;
   };
 
   PlotWidgetBase(QWidget* parent);
@@ -70,7 +73,8 @@ public:
   virtual ~PlotWidgetBase();
 
   virtual CurveInfo* addCurve(const std::string& name, PlotDataXY& src_data,
-                              QColor color = Qt::transparent);
+                              QColor color = Qt::transparent,
+                              QwtAxisId y_axis = QwtAxis::YLeft);
 
   virtual void removeCurve(const QString& title);
 
@@ -85,6 +89,10 @@ public:
 
   CurveInfo* curveFromTitle(const QString& title);
 
+  void setCurveYAxis(const QString& title, QwtAxisId y_axis);
+
+  QwtAxisId curveYAxis(const QString& title) const;
+
   virtual QwtSeriesWrapper* createTimeSeries(const PlotData* data,
                                              const QString& transform_ID = {});
 
@@ -93,6 +101,8 @@ public:
   virtual PJ::Range getVisualizationRangeX() const;
 
   virtual PJ::Range getVisualizationRangeY(PJ::Range range_X) const;
+
+  virtual PJ::Range getVisualizationRangeY(PJ::Range range_X, QwtAxisId y_axis) const;
 
   virtual void setModeXY(bool enable);
 
@@ -174,6 +184,8 @@ protected:
   void updateMaximumZoomArea();
 
   bool eventFilter(QObject* obj, QEvent* event);
+
+  void updateRightAxisVisibility();
 
 private:
   bool _xy_mode;

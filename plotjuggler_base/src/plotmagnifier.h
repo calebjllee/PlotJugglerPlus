@@ -55,8 +55,11 @@ signals:
 
 private:
   QPointF invTransform(QPoint pos);
+  QPointF invTransform(QPoint pos, int y_axis_id);
   QTimer _future_emit;
   AxisMode _default_mode;
+  double _mouse_y_left = 0.0;
+  double _mouse_y_right = 0.0;
 };
 
 #endif  // PLOTMAGNIFIER_H

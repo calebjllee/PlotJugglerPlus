@@ -50,17 +50,17 @@ void PlotMagnifier::rescale(double factor, AxisMode axis)
   const bool autoReplot = plt->autoReplot();
   plt->setAutoReplot(false);
 
-  const int axis_list[2] = { QwtPlot::xBottom, QwtPlot::yLeft };
+  const int axis_list[3] = { QwtPlot::xBottom, QwtPlot::yLeft, QwtPlot::yRight };
   QRectF new_rect;
 
-  for (int i = 0; i < 2; i++)
+  for (int i = 0; i < 3; i++)
   {
     double temp_factor = factor;
-    if (i == 1 && axis == X_AXIS)
+    if (axis_list[i] != QwtPlot::xBottom && axis == X_AXIS)
     {
       temp_factor = 1.0;
     }
-    if (i == 0 && axis == Y_AXIS)
+    if (axis_list[i] == QwtPlot::xBottom && axis == Y_AXIS)
     {
       temp_factor = 1.0;
     }
@@ -77,7 +77,11 @@ void PlotMagnifier::rescale(double factor, AxisMode axis)
 
       if (axisId == QwtPlot::yLeft)
       {
-        center = _mouse_position.y();
+        center = _mouse_y_left;
+      }
+      else if (axisId == QwtPlot::yRight)
+      {
+        center = _mouse_y_right;
       }
 
       if (scaleMap.transformation())
@@ -143,19 +147,28 @@ void PlotMagnifier::rescale(double factor, AxisMode axis)
 
 QPointF PlotMagnifier::invTransform(QPoint pos)
 {
+  return invTransform(pos, QwtPlot::yLeft);
+}
+
+QPointF PlotMagnifier::invTransform(QPoint pos, int y_axis_id)
+{
   QwtScaleMap xMap = plot()->canvasMap(QwtPlot::xBottom);
-  QwtScaleMap yMap = plot()->canvasMap(QwtPlot::yLeft);
+  QwtScaleMap yMap = plot()->canvasMap(y_axis_id);
   return QPointF(xMap.invTransform(pos.x()), yMap.invTransform(pos.y()));
 }
 
 void PlotMagnifier::widgetWheelEvent(QWheelEvent* event)
 {
   _mouse_position = invTransform(event->pos());
+  _mouse_y_left = invTransform(event->pos(), QwtPlot::yLeft).y();
+  _mouse_y_right = invTransform(event->pos(), QwtPlot::yRight).y();
   QwtPlotMagnifier::widgetWheelEvent(event);
 }
 
 void PlotMagnifier::widgetMousePressEvent(QMouseEvent* event)
 {
   _mouse_position = invTransform(event->pos());
+  _mouse_y_left = invTransform(event->pos(), QwtPlot::yLeft).y();
+  _mouse_y_right = invTransform(event->pos(), QwtPlot::yRight).y();
   QwtPlotMagnifier::widgetMousePressEvent(event);
 }

@@ -53,6 +53,8 @@ public:
 
   Range getVisualizationRangeY(Range range_X) const override;
 
+  Range getVisualizationRangeY(Range range_X, QwtAxisId y_axis) const override;
+
   void setZoomRectangle(QRectF rect, bool emit_signal);
 
   void reloadPlotData();
@@ -73,7 +75,11 @@ public:
 
   void setCustomAxisLimits(Range range);
 
+  void setCustomAxisLimits(Range range, QwtAxisId axisId);
+
   Range customAxisLimit() const;
+
+  Range customAxisLimit(QwtAxisId axisId) const;
 
   void removeCurve(const QString& title) override;
 
@@ -241,7 +247,8 @@ private:
 
   double _tracker_position;
 
-  Range _custom_Y_limits;
+  Range _custom_Y_limits_left;
+  Range _custom_Y_limits_right;
 
   TransformSelector* _transform_select_dialog;
 

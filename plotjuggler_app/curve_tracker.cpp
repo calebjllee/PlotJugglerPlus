@@ -30,9 +30,11 @@ CurveTracker::CurveTracker(QwtPlot* plot, QColor color) : QObject(plot), _plot(p
   _line_marker->setLinePen(QPen(color));
   _line_marker->setLineStyle(QwtPlotMarker::VLine);
   _line_marker->setValue(0, 0);
+  _line_marker->setAxes(QwtPlot::xBottom, QwtPlot::yLeft);
   _line_marker->attach(plot);
 
   _text_marker = new QwtPlotMarker();
+  _text_marker->setAxes(QwtPlot::xBottom, QwtPlot::yLeft);
   _text_marker->attach(plot);
 
   _visible = true;
@@ -86,6 +88,7 @@ void CurveTracker::setPosition(const QPointF& tracker_position)
   rect.setTop(_plot->canvasMap(QwtPlot::yLeft).s2());
   rect.setLeft(_plot->canvasMap(QwtPlot::xBottom).s1());
   rect.setRight(_plot->canvasMap(QwtPlot::xBottom).s2());
+  QRect canvas_rect = _plot->canvas()->rect();
 
   double min_Y = std::numeric_limits<double>::max();
   double max_Y = -min_Y;
@@ -146,8 +149,12 @@ void CurveTracker::setPosition(const QPointF& tracker_position)
         (_reference_pos) ? curvePointAt(curve, _reference_pos->x()) : std::nullopt;
 
     const QPointF point = maybe_point.value();
+    _point_markers[i]->setAxes(QwtPlot::xBottom, curve->yAxis());
     _point_markers[i]->setValue(point);
-    if (rect.contains(point) && _visible)
+    QPoint pixel(_plot->transform(QwtPlot::xBottom, point.x()),
+                 _plot->transform(curve->yAxis(), point.y()));
+
+    if (canvas_rect.contains(pixel) && _visible)
     {
       min_Y = std::min(min_Y, point.y());
       max_Y = std::max(max_Y, point.y());

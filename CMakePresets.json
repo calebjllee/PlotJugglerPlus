@@ -1,0 +1,45 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 16,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-vs2022-webmap",
+      "displayName": "Windows VS2022 WebMap",
+      "description": "Configure PlotJugglerPlus in build/PlotJuggler-webmap with vcpkg and Qt5 WebEngine",
+      "generator": "Visual Studio 17 2022",
+      "architecture": {
+        "value": "x64",
+        "strategy": "set"
+      },
+      "binaryDir": "${sourceDir}/build/PlotJuggler-webmap",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "C:/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/install",
+        "Qt5_DIR": "C:/Qt/5.15.2/msvc2019_64/lib/cmake/Qt5",
+        "Qt5WebEngineWidgets_DIR": "C:/Qt/5.15.2/msvc2019_64/lib/cmake/Qt5WebEngineWidgets",
+        "CMAKE_PREFIX_PATH": "C:/Qt/5.15.2/msvc2019_64"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-vs2022-webmap-release",
+      "displayName": "Build WebMap Release",
+      "configurePreset": "windows-vs2022-webmap",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-vs2022-webmap-release-install",
+      "displayName": "Build+Install WebMap Release",
+      "configurePreset": "windows-vs2022-webmap",
+      "configuration": "Release",
+      "targets": [
+        "install"
+      ]
+    }
+  ]
+}

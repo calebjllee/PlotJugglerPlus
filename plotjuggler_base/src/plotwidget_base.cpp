@@ -38,6 +38,7 @@
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QHBoxLayout>
+#include <QMargins>
 
 #include "plotpanner.h"
 
@@ -100,9 +101,11 @@ public:
 
     QwtScaleWidget* bottomAxis = axisWidget(QwtPlot::xBottom);
     QwtScaleWidget* leftAxis = axisWidget(QwtPlot::yLeft);
+    QwtScaleWidget* rightAxis = axisWidget(QwtPlot::yRight);
 
     bottomAxis->installEventFilter(parent);
     leftAxis->installEventFilter(parent);
+    rightAxis->installEventFilter(parent);
     this->canvas()->installEventFilter(parent);
   }
 
@@ -110,9 +113,11 @@ public:
   {
     QwtScaleWidget* bottomAxis = axisWidget(QwtPlot::xBottom);
     QwtScaleWidget* leftAxis = axisWidget(QwtPlot::yLeft);
+    QwtScaleWidget* rightAxis = axisWidget(QwtPlot::yRight);
 
     bottomAxis->installEventFilter(parent);
     leftAxis->removeEventFilter(parent);
+    rightAxis->removeEventFilter(parent);
     canvas()->removeEventFilter(parent);
 
     setCanvas(nullptr);
@@ -174,11 +179,13 @@ void PlotWidgetBase::resetZoom()
 {
   updateMaximumZoomArea();
   QRectF rect = maxZoomRect();
+  Range range_x({ std::min(rect.left(), rect.right()), std::max(rect.left(), rect.right()) });
+  auto range_y_left = getVisualizationRangeY(range_x, QwtPlot::yLeft);
+  auto range_y_right = getVisualizationRangeY(range_x, QwtPlot::yRight);
 
-  qwtPlot()->setAxisScale(QwtPlot::yLeft, std::min(rect.bottom(), rect.top()),
-                          std::max(rect.bottom(), rect.top()));
-  qwtPlot()->setAxisScale(QwtPlot::xBottom, std::min(rect.left(), rect.right()),
-                          std::max(rect.left(), rect.right()));
+  qwtPlot()->setAxisScale(QwtPlot::yLeft, range_y_left.min, range_y_left.max);
+  qwtPlot()->setAxisScale(QwtPlot::yRight, range_y_right.min, range_y_right.max);
+  qwtPlot()->setAxisScale(QwtPlot::xBottom, range_x.min, range_x.max);
   qwtPlot()->updateAxes();
 
   replot();
@@ -232,6 +239,71 @@ Range PlotWidgetBase::getVisualizationRangeY(Range range_X) const
   for (auto& it : curveList())
   {
     if (!it.curve->isVisible())
+    {
+      continue;
+    }
+
+    auto series = dynamic_cast<QwtSeriesWrapper*>(it.curve->data());
+
+    auto max_range_X = series->getVisualizationRangeX();
+    if (!max_range_X)
+    {
+      continue;
+    }
+
+    double left = std::max(max_range_X->min, range_X.min);
+    double right = std::min(max_range_X->max, range_X.max);
+    left = std::nextafter(left, right);
+    right = std::nextafter(right, left);
+
+    auto range_Y = series->getVisualizationRangeY({ left, right });
+    if (!range_Y)
+    {
+      qDebug() << " invalid range_Y in PlotWidget::maximumRangeY";
+      continue;
+    }
+    if (top < range_Y->max)
+    {
+      top = range_Y->max;
+    }
+    if (bottom > range_Y->min)
+    {
+      bottom = range_Y->min;
+    }
+  }
+
+  double margin = 0.1;
+
+  if (bottom > top)
+  {
+    bottom = 0;
+    top = 0;
+  }
+
+  if (top - bottom > std::numeric_limits<double>::epsilon())
+  {
+    margin = (top - bottom) * 0.025;
+  }
+
+  top += margin;
+  bottom -= margin;
+
+  return Range({ bottom, top });
+}
+
+Range PlotWidgetBase::getVisualizationRangeY(Range range_X, QwtAxisId y_axis) const
+{
+  double top = std::numeric_limits<double>::lowest();
+  double bottom = std::numeric_limits<double>::max();
+
+  for (auto& it : curveList())
+  {
+    if (!it.curve->isVisible())
+    {
+      continue;
+    }
+
+    if (it.curve->yAxis() != y_axis)
     {
       continue;
     }
@@ -365,6 +437,7 @@ PlotWidgetBase::PlotWidgetBase(QWidget* parent) : _xy_mode(false), _keep_aspect_
 
   qwtPlot()->setCanvasBackground(Qt::white);
   qwtPlot()->setAxisAutoScale(QwtPlot::yLeft, true);
+  qwtPlot()->setAxisAutoScale(QwtPlot::yRight, true);
   qwtPlot()->setAxisAutoScale(QwtPlot::xBottom, true);
 
   qwtPlot()->axisScaleEngine(QwtPlot::xBottom)->setAttribute(QwtScaleEngine::Floating, true);
@@ -372,6 +445,8 @@ PlotWidgetBase::PlotWidgetBase(QWidget* parent) : _xy_mode(false), _keep_aspect_
 
   qwtPlot()->setAxisScale(QwtPlot::xBottom, 0.0, 1.0);
   qwtPlot()->setAxisScale(QwtPlot::yLeft, 0.0, 1.0);
+  qwtPlot()->setAxisScale(QwtPlot::yRight, 0.0, 1.0);
+  qwtPlot()->setAxisVisible(QwtPlot::yRight, false);
 }
 
 PlotWidgetBase::~PlotWidgetBase()
@@ -384,7 +459,7 @@ PlotWidgetBase::~PlotWidgetBase()
 }
 
 PlotWidgetBase::CurveInfo* PlotWidgetBase::addCurve(const std::string& name, PlotDataXY& data,
-                                                    QColor color)
+                                                    QColor color, QwtAxisId y_axis)
 {
   const auto qname = QString::fromStdString(name);
 
@@ -427,6 +502,7 @@ PlotWidgetBase::CurveInfo* PlotWidgetBase::addCurve(const std::string& name, Plo
   setStyle(curve, p->overridden_curve_style.value_or(p->default_curve_style));
 
   curve->setRenderHint(QwtPlotItem::RenderAntialiased, true);
+  curve->setYAxis(y_axis);
 
   curve->attach(qwtPlot());
 
@@ -441,8 +517,10 @@ PlotWidgetBase::CurveInfo* PlotWidgetBase::addCurve(const std::string& name, Plo
   curve_info.curve = curve;
   curve_info.marker = marker;
   curve_info.src_name = name;
+  curve_info.y_axis = y_axis;
 
   p->curve_list.push_back(curve_info);
+  updateRightAxisVisibility();
 
   return &(p->curve_list.back());
 }
@@ -465,6 +543,7 @@ void PlotWidgetBase::removeCurve(const QString& title)
     it->marker->detach();
     delete it->marker;
     p->curve_list.erase(it);
+    updateRightAxisVisibility();
 
     emit curveListChanged();
   }
@@ -537,8 +616,10 @@ bool PlotWidgetBase::eventFilter(QObject* obj, QEvent* event)
 
   QwtScaleWidget* bottomAxis = qwtPlot()->axisWidget(QwtPlot::xBottom);
   QwtScaleWidget* leftAxis = qwtPlot()->axisWidget(QwtPlot::yLeft);
+  QwtScaleWidget* rightAxis = qwtPlot()->axisWidget(QwtPlot::yRight);
 
-  if (magnifier() && (obj == bottomAxis || obj == leftAxis) && !(isXYPlot() && keepRatioXY()))
+  if (magnifier() && (obj == bottomAxis || obj == leftAxis || obj == rightAxis) &&
+      !(isXYPlot() && keepRatioXY()))
   {
     if (event->type() == QEvent::Wheel)
     {
@@ -547,8 +628,16 @@ bool PlotWidgetBase::eventFilter(QObject* obj, QEvent* event)
       {
         magnifier()->setDefaultMode(PlotMagnifier::X_AXIS);
       }
+      else if (obj == rightAxis)
+      {
+        magnifier()->setAxisEnabled(QwtPlot::yLeft, false);
+        magnifier()->setAxisEnabled(QwtPlot::yRight, true);
+        magnifier()->setDefaultMode(PlotMagnifier::Y_AXIS);
+      }
       else
       {
+        magnifier()->setAxisEnabled(QwtPlot::yLeft, true);
+        magnifier()->setAxisEnabled(QwtPlot::yRight, false);
         magnifier()->setDefaultMode(PlotMagnifier::Y_AXIS);
       }
       magnifier()->widgetWheelEvent(wheel_event);
@@ -558,10 +647,35 @@ bool PlotWidgetBase::eventFilter(QObject* obj, QEvent* event)
   {
     if (magnifier())
     {
+      magnifier()->setAxisEnabled(QwtPlot::yLeft, true);
+      magnifier()->setAxisEnabled(QwtPlot::yRight, true);
       magnifier()->setDefaultMode(PlotMagnifier::BOTH_AXES);
     }
     switch (event->type())
     {
+      case QEvent::MouseMove: {
+        auto mouse_event = dynamic_cast<QMouseEvent*>(event);
+        auto hovered_item = legend()->itemAt(mouse_event->pos());
+        bool hovered_hide_button =
+            (legend()->hideButtonRect() + QMargins(2, 2, 2, 2)).contains(mouse_event->pos());
+
+        bool changed = legend()->setHoveredItem(hovered_item);
+        if (hovered_item || hovered_hide_button)
+        {
+          qwtPlot()->canvas()->setCursor(Qt::ArrowCursor);
+        }
+        else
+        {
+          qwtPlot()->canvas()->unsetCursor();
+        }
+
+        if (changed)
+        {
+          replot();
+        }
+      }
+      break;
+
       case QEvent::Wheel: {
         auto mouse_event = dynamic_cast<QWheelEvent*>(event);
 
@@ -600,27 +714,30 @@ bool PlotWidgetBase::eventFilter(QObject* obj, QEvent* event)
           auto clicked_item = legend()->processMousePressEvent(mouse_event);
           if (clicked_item)
           {
-            for (auto& it : curveList())
-            {
-              QSettings settings;
-              bool autozoom_visibility =
-                  settings.value("Preferences::autozoom_visibility", true).toBool();
-              if (clicked_item == it.curve)
-              {
-                it.curve->setVisible(!it.curve->isVisible());
-                //_tracker->redraw();
+            return true;
+          }
 
-                if (autozoom_visibility)
-                {
-                  resetZoom();
-                }
-                replot();
-                return true;
-              }
-            }
+          auto legend_rect = legend()->geometry(qwtPlot()->canvas()->rect());
+          bool clicked_hide_button =
+              (legend()->hideButtonRect() + QMargins(2, 2, 2, 2)).contains(mouse_event->pos());
+
+          if (legend_rect.contains(mouse_event->pos()) || clicked_hide_button)
+          {
+            return true;
           }
         }
       }
+      break;
+
+      case QEvent::Leave: {
+        bool changed = legend()->setHoveredItem(nullptr);
+        qwtPlot()->canvas()->unsetCursor();
+        if (changed)
+        {
+          replot();
+        }
+      }
+      break;
     }
   }
   return false;
@@ -826,8 +943,38 @@ void PlotWidgetBase::removeAllCurves()
   }
 
   curveList().clear();
+  updateRightAxisVisibility();
   emit curveListChanged();
   replot();
+}
+
+void PlotWidgetBase::setCurveYAxis(const QString& title, QwtAxisId y_axis)
+{
+  auto curve_info = curveFromTitle(title);
+  if (!curve_info)
+  {
+    return;
+  }
+  if (curve_info->curve->yAxis() == y_axis)
+  {
+    return;
+  }
+
+  curve_info->curve->setYAxis(y_axis);
+  curve_info->y_axis = y_axis;
+  updateRightAxisVisibility();
+}
+
+QwtAxisId PlotWidgetBase::curveYAxis(const QString& title) const
+{
+  for (auto& info : p->curve_list)
+  {
+    if (info.curve->title() == title || info.src_name == title.toStdString())
+    {
+      return info.curve->yAxis();
+    }
+  }
+  return QwtPlot::yLeft;
 }
 
 PlotLegend* PlotWidgetBase::legend()
@@ -864,9 +1011,10 @@ void PlotWidgetBase::updateMaximumZoomArea()
 
   rangeX.min = std::numeric_limits<double>::lowest();
   rangeX.max = std::numeric_limits<double>::max();
-  auto rangeY = getVisualizationRangeY(rangeX);
-  max_rect.setBottom(rangeY.min);
-  max_rect.setTop(rangeY.max);
+  auto rangeY_left = getVisualizationRangeY(rangeX, QwtPlot::yLeft);
+  auto rangeY_right = getVisualizationRangeY(rangeX, QwtPlot::yRight);
+  max_rect.setBottom(rangeY_left.min);
+  max_rect.setTop(rangeY_left.max);
 
   if (isXYPlot() && _keep_aspect_ratio)
   {
@@ -891,15 +1039,32 @@ void PlotWidgetBase::updateMaximumZoomArea()
     }
     magnifier()->setAxisLimits(QwtPlot::xBottom, max_rect.left(), max_rect.right());
     magnifier()->setAxisLimits(QwtPlot::yLeft, max_rect.bottom(), max_rect.top());
+    magnifier()->setAxisLimits(QwtPlot::yRight, rangeY_right.min, rangeY_right.max);
     zoomer()->keepAspectRatio(true);
   }
   else
   {
     magnifier()->setAxisLimits(QwtPlot::xBottom, max_rect.left(), max_rect.right());
     magnifier()->setAxisLimits(QwtPlot::yLeft, max_rect.bottom(), max_rect.top());
+    magnifier()->setAxisLimits(QwtPlot::yRight, rangeY_right.min, rangeY_right.max);
     zoomer()->keepAspectRatio(false);
   }
   _max_zoom_rect = max_rect;
+}
+
+void PlotWidgetBase::updateRightAxisVisibility()
+{
+  bool visible_right_axis = false;
+  for (const auto& curve_info : p->curve_list)
+  {
+    if (curve_info.curve && curve_info.curve->isVisible() &&
+        curve_info.curve->yAxis() == QwtPlot::yRight)
+    {
+      visible_right_axis = true;
+      break;
+    }
+  }
+  qwtPlot()->setAxisVisible(QwtPlot::yRight, visible_right_axis);
 }
 
 void PlotWidgetBase::setLineWidth(LineWidth width)
