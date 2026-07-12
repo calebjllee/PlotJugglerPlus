@@ -5,6 +5,9 @@
  */
 
 #include <functional>
+#include <any>
+#include <cmath>
+#include <limits>
 #include <queue>
 #include <stdio.h>
 
@@ -26,8 +29,13 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPluginLoader>
+#include <QProcess>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QKeySequence>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QScrollBar>
 #include <QSettings>
 #include <QStringListModel>
@@ -66,6 +74,101 @@
 #include <ament_index_cpp/get_package_prefix.hpp>
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #endif
+
+namespace
+{
+
+constexpr const char* MF4_LAZY_METADATA_TYPE = "plotjuggler.mf4.lazy_channel";
+
+QString mf4PythonExecutable()
+{
+  const QByteArray configured = qgetenv("PJ_ASAMMDF_PYTHON");
+  if (!configured.isEmpty())
+  {
+    return QString::fromLocal8Bit(configured);
+  }
+  return QStringLiteral("python");
+}
+
+QString mf4HydrationScript()
+{
+  return QStringLiteral(R"PY(
+import json
+import sys
+
+try:
+    import numpy as np
+    from asammdf import MDF
+except Exception as exc:
+    print(json.dumps({
+        "type": "error",
+        "message": "Python package 'asammdf' is required to load MF4/MDF files: %s" % exc
+    }), flush=True)
+    sys.exit(2)
+
+filename = sys.argv[1]
+group_index = int(sys.argv[2])
+channel_index = int(sys.argv[3])
+chunk_size = 10000
+
+try:
+    mdf = MDF(filename)
+    signal = mdf.get(group=group_index, index=channel_index)
+except Exception as exc:
+    print(json.dumps({
+        "type": "error",
+        "message": "Failed to load MF4/MDF channel: %s" % exc
+    }), flush=True)
+    sys.exit(3)
+
+samples = np.asarray(getattr(signal, "samples", []))
+timestamps = np.asarray(getattr(signal, "timestamps", []), dtype=float)
+
+if samples.ndim != 1 or timestamps.ndim != 1 or len(samples) != len(timestamps):
+    print(json.dumps({
+        "type": "error",
+        "message": "MF4/MDF channel is not a one-dimensional numeric signal"
+    }), flush=True)
+    sys.exit(4)
+
+try:
+    if samples.dtype.kind not in "buif":
+        raise TypeError("non-numeric channel")
+    samples = samples.astype(float, copy=False)
+except Exception:
+    print(json.dumps({
+        "type": "error",
+        "message": "MF4/MDF channel is not numeric"
+    }), flush=True)
+    sys.exit(5)
+
+loaded_points = 0
+for start in range(0, len(samples), chunk_size):
+    end = min(start + chunk_size, len(samples))
+    t_chunk = timestamps[start:end]
+    v_chunk = samples[start:end]
+    mask = np.isfinite(t_chunk) & np.isfinite(v_chunk)
+    if not np.any(mask):
+        continue
+
+    t_out = t_chunk[mask].astype(float, copy=False).tolist()
+    v_out = v_chunk[mask].astype(float, copy=False).tolist()
+    loaded_points += len(v_out)
+
+    print(json.dumps({
+        "type": "chunk",
+        "t": t_out,
+        "v": v_out
+    }, allow_nan=False), flush=True)
+
+print(json.dumps({
+    "type": "done",
+    "points": loaded_points
+}), flush=True)
+)PY");
+}
+
+}  // namespace
 
 MainWindow::MainWindow(const QCommandLineParser& commandline_parser, QWidget* parent)
   : QMainWindow(parent)
@@ -828,6 +931,9 @@ void MainWindow::resizeEvent(QResizeEvent*)
 
 void MainWindow::onPlotAdded(PlotWidget* plot)
 {
+  plot->setCurveLoadCallback(
+      [this](const std::string& curve_name) { return ensureCurveLoaded(curve_name); });
+
   connect(plot, &PlotWidget::undoableChange, this, &MainWindow::onUndoableChange);
 
   connect(plot, &PlotWidget::trackerMoved, this, &MainWindow::onTrackerMovedFromWidget);
@@ -1109,6 +1215,8 @@ void MainWindow::onDeleteMultipleCurves(const std::vector<std::string>& curve_na
     emit dataSourceRemoved(curve_name);
     _curvelist_widget->removeCurve(curve_name);
     _mapped_plot_data.erase(curve_name);
+    _mapped_plot_data.user_defined.erase(curve_name);
+    _lazy_mf4_series.erase(curve_name);
     _transform_functions.erase(curve_name);
   }
   updateTimeOffset();
@@ -1202,6 +1310,7 @@ void MainWindow::deleteAllData()
   forEachWidget([](PlotWidget* plot) { plot->removeAllCurves(); });
 
   _mapped_plot_data.clear();
+  _lazy_mf4_series.clear();
   _transform_functions.clear();
   _curvelist_widget->clear();
   _loaded_datafiles_history.clear();
@@ -1238,6 +1347,11 @@ void MainWindow::importPlotDataMap(PlotDataMapRef& new_data, bool remove_old)
 {
   if (remove_old)
   {
+    _lazy_mf4_series.clear();
+  }
+
+  if (remove_old)
+  {
     auto ClearOldSeries = [](auto& prev_plot_data, auto& new_plot_data) {
       for (auto& it : prev_plot_data)
       {
@@ -1257,6 +1371,8 @@ void MainWindow::importPlotDataMap(PlotDataMapRef& new_data, bool remove_old)
   auto [added_curves, curve_updated, data_pushed] =
       MoveData(new_data, _mapped_plot_data, remove_old);
 
+  registerLazyMf4Series();
+
   for (const auto& added_curve : added_curves)
   {
     _curvelist_widget->addCurve(added_curve);
@@ -1266,6 +1382,247 @@ void MainWindow::importPlotDataMap(PlotDataMapRef& new_data, bool remove_old)
   {
     _curvelist_widget->refreshColumns();
   }
+}
+
+void MainWindow::registerLazyMf4Series()
+{
+  for (const auto& [series_name, metadata_series] : _mapped_plot_data.user_defined)
+  {
+    if (metadata_series.size() == 0)
+    {
+      continue;
+    }
+
+    const auto* metadata = std::any_cast<std::string>(&metadata_series.front().y);
+    if (!metadata)
+    {
+      continue;
+    }
+
+    QJsonParseError parse_error;
+    const QJsonDocument doc =
+        QJsonDocument::fromJson(QByteArray::fromStdString(*metadata), &parse_error);
+    if (parse_error.error != QJsonParseError::NoError || !doc.isObject())
+    {
+      continue;
+    }
+
+    const QJsonObject object = doc.object();
+    if (object.value(QStringLiteral("metadata_type")).toString() !=
+        QString::fromLatin1(MF4_LAZY_METADATA_TYPE))
+    {
+      continue;
+    }
+
+    LazyMf4SeriesInfo info;
+    info.filename = object.value(QStringLiteral("file")).toString();
+    info.group_index = object.value(QStringLiteral("group")).toInt(-1);
+    info.channel_index = object.value(QStringLiteral("index")).toInt(-1);
+    info.unit = object.value(QStringLiteral("unit")).toString();
+    info.sample_count = size_t(object.value(QStringLiteral("samples")).toDouble());
+
+    auto numeric_it = _mapped_plot_data.numeric.find(series_name);
+    info.loaded = numeric_it != _mapped_plot_data.numeric.end() && numeric_it->second.size() > 0;
+
+    _lazy_mf4_series[series_name] = info;
+  }
+}
+
+bool MainWindow::ensureCurveLoaded(const std::string& curve_name)
+{
+  auto info_it = _lazy_mf4_series.find(curve_name);
+  if (info_it == _lazy_mf4_series.end() || info_it->second.loaded)
+  {
+    return true;
+  }
+
+  return hydrateLazyMf4Series(curve_name, info_it->second);
+}
+
+bool MainWindow::hydrateLazyMf4Series(const std::string& curve_name, LazyMf4SeriesInfo& info)
+{
+  if (info.loading)
+  {
+    return false;
+  }
+  if (info.filename.isEmpty() || info.group_index < 0 || info.channel_index < 0)
+  {
+    QMessageBox::warning(this, QStringLiteral("MF4 loader"),
+                         QStringLiteral("Invalid lazy MF4 metadata for [%1].")
+                             .arg(QString::fromStdString(curve_name)));
+    return false;
+  }
+
+  auto series_it = _mapped_plot_data.numeric.find(curve_name);
+  if (series_it == _mapped_plot_data.numeric.end())
+  {
+    QMessageBox::warning(this, QStringLiteral("MF4 loader"),
+                         QStringLiteral("Can't find lazy MF4 placeholder [%1].")
+                             .arg(QString::fromStdString(curve_name)));
+    return false;
+  }
+
+  info.loading = true;
+  series_it->second.clear();
+
+  QProcess process;
+  process.setProgram(mf4PythonExecutable());
+  process.setArguments({ QStringLiteral("-u"), QStringLiteral("-c"), mf4HydrationScript(),
+                         info.filename, QString::number(info.group_index),
+                         QString::number(info.channel_index) });
+  process.setProcessChannelMode(QProcess::SeparateChannels);
+
+  QProgressDialog progress_dialog(
+      QStringLiteral("Loading MF4 channel...\n%1").arg(QString::fromStdString(curve_name)),
+      QStringLiteral("Cancel"), 0, 0, this);
+  progress_dialog.setWindowTitle(QStringLiteral("Loading MF4 Channel"));
+  progress_dialog.setWindowModality(Qt::ApplicationModal);
+  progress_dialog.show();
+
+  process.start();
+  if (!process.waitForStarted())
+  {
+    info.loading = false;
+    QMessageBox::warning(this, QStringLiteral("MF4 loader"),
+                         QStringLiteral("Failed to start Python executable '%1'.\n\n"
+                                        "Set PJ_ASAMMDF_PYTHON to the Python executable "
+                                        "that has the 'asammdf' package installed.")
+                             .arg(mf4PythonExecutable()));
+    return false;
+  }
+
+  QByteArray pending_stdout;
+  QString error_message;
+  size_t loaded_points = 0;
+
+  auto append_chunk = [&](const QJsonObject& object) {
+    const QJsonArray timestamps = object.value(QStringLiteral("t")).toArray();
+    const QJsonArray values = object.value(QStringLiteral("v")).toArray();
+    const int count = std::min(timestamps.size(), values.size());
+    for (int i = 0; i < count; i++)
+    {
+      const double timestamp = timestamps.at(i).toDouble(std::numeric_limits<double>::quiet_NaN());
+      const double value = values.at(i).toDouble(std::numeric_limits<double>::quiet_NaN());
+      if (std::isfinite(timestamp) && std::isfinite(value))
+      {
+        series_it->second.pushBack({ timestamp, value });
+        loaded_points++;
+      }
+    }
+  };
+
+  auto process_line = [&](const QByteArray& line) -> bool {
+    QJsonParseError parse_error;
+    const QJsonDocument doc = QJsonDocument::fromJson(line, &parse_error);
+    if (parse_error.error != QJsonParseError::NoError || !doc.isObject())
+    {
+      error_message = QStringLiteral("Invalid response from asammdf channel bridge: %1")
+                          .arg(parse_error.errorString());
+      return false;
+    }
+
+    const QJsonObject object = doc.object();
+    const QString type = object.value(QStringLiteral("type")).toString();
+    if (type == QStringLiteral("error"))
+    {
+      error_message = object.value(QStringLiteral("message")).toString();
+      return false;
+    }
+    if (type == QStringLiteral("chunk"))
+    {
+      append_chunk(object);
+    }
+    return true;
+  };
+
+  auto consume_stdout = [&]() -> bool {
+    pending_stdout += process.readAllStandardOutput();
+    while (true)
+    {
+      const int newline_index = pending_stdout.indexOf('\n');
+      if (newline_index < 0)
+      {
+        break;
+      }
+      const QByteArray line = pending_stdout.left(newline_index).trimmed();
+      pending_stdout.remove(0, newline_index + 1);
+      if (!line.isEmpty() && !process_line(line))
+      {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  while (process.state() != QProcess::NotRunning)
+  {
+    process.waitForReadyRead(100);
+    if (!consume_stdout())
+    {
+      process.kill();
+      process.waitForFinished(1000);
+      info.loading = false;
+      series_it->second.clear();
+      QMessageBox::warning(this, QStringLiteral("MF4 loader"), error_message);
+      return false;
+    }
+
+    progress_dialog.setLabelText(
+        QStringLiteral("Loading MF4 channel...\n%1\n%2 points")
+            .arg(QString::fromStdString(curve_name))
+            .arg(loaded_points));
+    QApplication::processEvents();
+
+    if (progress_dialog.wasCanceled())
+    {
+      process.kill();
+      process.waitForFinished(1000);
+      info.loading = false;
+      series_it->second.clear();
+      return false;
+    }
+  }
+
+  if (!consume_stdout())
+  {
+    info.loading = false;
+    series_it->second.clear();
+    QMessageBox::warning(this, QStringLiteral("MF4 loader"), error_message);
+    return false;
+  }
+  if (!pending_stdout.trimmed().isEmpty() && !process_line(pending_stdout.trimmed()))
+  {
+    info.loading = false;
+    series_it->second.clear();
+    QMessageBox::warning(this, QStringLiteral("MF4 loader"), error_message);
+    return false;
+  }
+
+  const QByteArray stderr_output = process.readAllStandardError().trimmed();
+  if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0)
+  {
+    info.loading = false;
+    series_it->second.clear();
+    const QString details = QString::fromLocal8Bit(stderr_output);
+    QMessageBox::warning(this, QStringLiteral("MF4 loader"),
+                         details.isEmpty() ? QStringLiteral("MF4 channel load failed.")
+                                           : details);
+    return false;
+  }
+
+  info.loaded = true;
+  info.loading = false;
+  series_it->second.setAttribute(
+      PJ::TOOL_TIP,
+      QStringLiteral("MF4 lazy channel\nState: loaded\nSamples: %1\nUnit: %2")
+          .arg(info.sample_count)
+          .arg(info.unit.isEmpty() ? QStringLiteral("-") : info.unit));
+  series_it->second.setAttribute(PJ::ITALIC_FONTS, false);
+
+  _curvelist_widget->refreshColumns();
+  updateTimeOffset();
+  updateTimeSlider();
+  return true;
 }
 
 bool MainWindow::isStreamingActive() const
@@ -1449,6 +1806,7 @@ std::unordered_set<std::string> MainWindow::loadDataFromFile(const FileLoadInfo&
       {
         AddPrefixToPlotData(info.prefix.toStdString(), mapped_data.numeric);
         AddPrefixToPlotData(info.prefix.toStdString(), mapped_data.strings);
+        AddPrefixToPlotData(info.prefix.toStdString(), mapped_data.user_defined);
 
         added_names = mapped_data.getAllNames();
         bool remove_old = !merge_files;

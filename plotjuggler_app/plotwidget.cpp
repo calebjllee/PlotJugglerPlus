@@ -313,8 +313,13 @@ void PlotWidget::canvasContextMenuTriggered(const QPoint& pos)
 }
 
 PlotWidget::CurveInfo* PlotWidget::addCurveXY(std::string name_x, std::string name_y,
-                                              QString curve_name)
+                                               QString curve_name)
 {
+  if (!ensureCurveLoaded(name_x) || !ensureCurveLoaded(name_y))
+  {
+    return nullptr;
+  }
+
   std::string name = curve_name.toStdString();
 
   while (name.empty())
@@ -412,6 +417,11 @@ PlotWidget::CurveInfo* PlotWidget::addCurveXY(std::string name_x, std::string na
 
 PlotWidgetBase::CurveInfo* PlotWidget::addCurve(const std::string& name, QColor color)
 {
+  if (!ensureCurveLoaded(name))
+  {
+    return nullptr;
+  }
+
   PlotWidgetBase::CurveInfo* info = nullptr;
 
   auto it1 = _mapped_data.numeric.find(name);
@@ -436,6 +446,16 @@ PlotWidgetBase::CurveInfo* PlotWidget::addCurve(const std::string& name, QColor 
   _tracker->redraw();
   _reference_tracker->redraw();
   return info;
+}
+
+void PlotWidget::setCurveLoadCallback(std::function<bool(const std::string&)> callback)
+{
+  _curve_load_callback = std::move(callback);
+}
+
+bool PlotWidget::ensureCurveLoaded(const std::string& name)
+{
+  return !_curve_load_callback || _curve_load_callback(name);
 }
 
 void PlotWidget::removeCurve(const QString& title)

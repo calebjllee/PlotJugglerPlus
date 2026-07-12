@@ -9,6 +9,7 @@
 
 #include <map>
 #include <deque>
+#include <functional>
 #include <QObject>
 #include <QTextEdit>
 #include <QDomDocument>
@@ -72,6 +73,8 @@ public:
   CurveInfo* addCurveXY(std::string name_x, std::string name_y, QString curve_name = "");
 
   CurveInfo* addCurve(const std::string& name, QColor color = Qt::transparent);
+
+  void setCurveLoadCallback(std::function<bool(const std::string&)> callback);
 
   void setCustomAxisLimits(Range range);
 
@@ -255,6 +258,10 @@ private:
   SnippetsMap _snippets;
 
   bool _context_menu_enabled;
+
+  std::function<bool(const std::string&)> _curve_load_callback;
+
+  bool ensureCurveLoaded(const std::string& name);
 
   // void updateMaximumZoomArea();
   void rescaleEqualAxisScaling();

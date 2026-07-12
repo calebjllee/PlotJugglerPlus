@@ -10,6 +10,7 @@
 #include <set>
 #include <deque>
 #include <functional>
+#include <unordered_map>
 
 #include <QCommandLineParser>
 #include <QElapsedTimer>
@@ -153,6 +154,19 @@ private:
   std::vector<FileLoadInfo> _loaded_datafiles_previous;
   CurveTracker::Parameter _tracker_param;
 
+  struct LazyMf4SeriesInfo
+  {
+    QString filename;
+    int group_index = -1;
+    int channel_index = -1;
+    QString unit;
+    size_t sample_count = 0;
+    bool loaded = false;
+    bool loading = false;
+  };
+
+  std::unordered_map<std::string, LazyMf4SeriesInfo> _lazy_mf4_series;
+
   std::map<CurveTracker::Parameter, QIcon> _tracker_button_icons;
 
   MonitoredValue _time_offset;
@@ -223,6 +237,12 @@ private:
   void checkAllCurvesFromLayout(const QDomElement& root);
 
   void importPlotDataMap(PlotDataMapRef& new_data, bool remove_old);
+
+  void registerLazyMf4Series();
+
+  bool ensureCurveLoaded(const std::string& curve_name);
+
+  bool hydrateLazyMf4Series(const std::string& curve_name, LazyMf4SeriesInfo& info);
 
   bool isStreamingActive() const;
 
