@@ -996,6 +996,29 @@ void MainWindow::onPlotAdded(PlotWidget* plot)
   }
 }
 
+void MainWindow::onMapPanelAdded(MapDockPanel* panel)
+{
+  connect(panel, &MapDockPanel::curvesLoadRequested, this,
+          [this, panel](const QStringList& curve_names) {
+            bool loaded_any = false;
+            for (const auto& curve_name : curve_names)
+            {
+              loaded_any |= ensureCurveLoaded(curve_name.toStdString());
+            }
+            if (loaded_any)
+            {
+              panel->refreshCurveCombos();
+            }
+          });
+
+  panel->loadDetectedCurves();
+
+  if (_tracker_time >= 0)
+  {
+    panel->onTimeUpdated(_tracker_time);
+  }
+}
+
 void MainWindow::onPlotZoomChanged(PlotWidget* modified_plot, QRectF new_range)
 {
   if (ui->buttonLink->isChecked())
@@ -1021,6 +1044,7 @@ void MainWindow::onPlotZoomChanged(PlotWidget* modified_plot, QRectF new_range)
 void MainWindow::onPlotTabAdded(PlotDocker* docker)
 {
   connect(docker, &PlotDocker::plotWidgetAdded, this, &MainWindow::onPlotAdded);
+  connect(docker, &PlotDocker::mapPanelAdded, this, &MainWindow::onMapPanelAdded);
 
   connect(this, &MainWindow::stylesheetChanged, docker, &PlotDocker::on_stylesheetChanged);
 
@@ -2177,7 +2201,7 @@ void MainWindow::on_stylesheetChanged(QString theme)
 
   ui->buttonZoomOut->setIcon(LoadSvg(":/resources/svg/zoom_max.svg", theme));
   ui->playbackLoop->setIcon(LoadSvg(":/resources/svg/loop.svg", theme));
-  ui->buttonPlay->setIcon(LoadSvg(":/resources/svg/play_arrow.svg", theme));
+  updatePlaybackButtonIcon();
   ui->buttonUseDateTime->setIcon(LoadSvg(":/resources/svg/datetime.svg", theme));
   ui->buttonActivateGrid->setIcon(LoadSvg(":/resources/svg/grid.svg", theme));
   ui->buttonRatio->setIcon(LoadSvg(":/resources/svg/ratio.svg", theme));
@@ -2940,6 +2964,8 @@ void MainWindow::on_buttonRatio_toggled(bool checked)
 
 void MainWindow::on_buttonPlay_toggled(bool checked)
 {
+  updatePlaybackButtonIcon();
+
   if (checked)
   {
     _publish_timer->start();
@@ -2949,6 +2975,15 @@ void MainWindow::on_buttonPlay_toggled(bool checked)
   {
     _publish_timer->stop();
   }
+}
+
+void MainWindow::updatePlaybackButtonIcon()
+{
+  QSettings settings;
+  const QString theme = settings.value("StyleSheet::theme", "light").toString();
+  const QString icon_path = ui->buttonPlay->isChecked() ? QString(":/resources/svg/pause.svg") :
+                                                          QString(":/resources/svg/play_arrow.svg");
+  ui->buttonPlay->setIcon(LoadSvg(icon_path, theme));
 }
 
 void MainWindow::on_actionClearBuffer_triggered()

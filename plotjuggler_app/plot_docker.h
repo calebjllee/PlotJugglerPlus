@@ -98,6 +98,7 @@ private:
 signals:
 
   void plotWidgetAdded(PlotWidget*);
+  void mapPanelAdded(MapDockPanel*);
 
   void undoableChange();
 };

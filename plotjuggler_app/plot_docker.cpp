@@ -503,6 +503,11 @@ void DockWidget::convertToMapPanel()
   _map_panel = new MapDockPanel(_datamap, this);
   setWidget(_map_panel);
 
+  if (auto parent_docker = static_cast<PlotDocker*>(dockManager()))
+  {
+    parent_docker->mapPanelAdded(_map_panel);
+  }
+
   if (_plot_widget)
   {
     _plot_widget->deleteLater();

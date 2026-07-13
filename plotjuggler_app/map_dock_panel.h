@@ -11,6 +11,8 @@
 #include <QComboBox>
 #include <QLabel>
 #include <QDomDocument>
+#include <QStringList>
+#include <QSlider>
 
 #include "PlotJuggler/plotdata.h"
 
@@ -24,15 +26,21 @@ public:
   explicit MapDockPanel(PJ::PlotDataMapRef& plot_data, QWidget* parent = nullptr);
 
   void onTimeUpdated(double absolute_time);
+  void loadDetectedCurves();
+  void refreshCurveCombos();
 
   QDomElement xmlSaveState(QDomDocument& doc) const;
   bool xmlLoadState(const QDomElement& element);
 
+signals:
+  void curvesLoadRequested(const QStringList& curve_names);
+
 private:
-  void refreshCurveCombos();
   void autoDetectCurves(bool force_overwrite);
+  void requestSelectedCurveLoad();
   void selectionChanged();
   void applyPendingSelection();
+  void updateTrailLengthLabel();
   void updateRouteOnMap();
   void updateMarkerOnMap(double absolute_time);
   void zoomToRoute();
@@ -45,6 +53,8 @@ private:
 
   QComboBox* _lat_combo = nullptr;
   QComboBox* _lon_combo = nullptr;
+  QSlider* _trail_length_slider = nullptr;
+  QLabel* _trail_length_label = nullptr;
   QLabel* _status_label = nullptr;
   QWebEngineView* _web_view = nullptr;
 

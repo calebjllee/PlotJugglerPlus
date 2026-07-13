@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 #include <QHBoxLayout>
@@ -85,10 +86,29 @@ MapDockPanel::MapDockPanel(PJ::PlotDataMapRef& plot_data, QWidget* parent)
   row->addWidget(_lon_combo, 1);
   row->addWidget(fit_button);
 
+  auto* trail_row = new QHBoxLayout();
+  trail_row->setSpacing(6);
+
+  auto* trail_label = new QLabel("Trail", this);
+  _trail_length_slider = new QSlider(Qt::Horizontal, this);
+  _trail_length_slider->setRange(0, 60);
+  _trail_length_slider->setSingleStep(1);
+  _trail_length_slider->setPageStep(10);
+  _trail_length_slider->setTickInterval(10);
+  _trail_length_slider->setTickPosition(QSlider::TicksBelow);
+  _trail_length_slider->setValue(0);
+  _trail_length_label = new QLabel(this);
+  _trail_length_label->setMinimumWidth(68);
+
+  trail_row->addWidget(trail_label);
+  trail_row->addWidget(_trail_length_slider, 1);
+  trail_row->addWidget(_trail_length_label);
+
   _status_label = new QLabel(this);
   _status_label->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
   layout->addLayout(row);
+  layout->addLayout(trail_row);
   layout->addWidget(_status_label);
 
 #if PJ_HAS_WEBENGINE
@@ -109,10 +129,13 @@ MapDockPanel::MapDockPanel(PJ::PlotDataMapRef& plot_data, QWidget* parent)
   connect(_lon_combo, &QComboBox::currentTextChanged, this,
           [this](const QString&) { selectionChanged(); });
   connect(fit_button, &QPushButton::clicked, this, [this]() {
-    refreshCurveCombos();
-    autoDetectCurves(/*force_overwrite=*/true);
+    loadDetectedCurves();
     selectionChanged();
     zoomToRoute();
+  });
+  connect(_trail_length_slider, &QSlider::valueChanged, this, [this](int) {
+    updateTrailLengthLabel();
+    selectionChanged();
   });
 
 #if PJ_HAS_WEBENGINE
@@ -136,6 +159,15 @@ MapDockPanel::MapDockPanel(PJ::PlotDataMapRef& plot_data, QWidget* parent)
 #endif
 
   refreshCurveCombos();
+  updateTrailLengthLabel();
+}
+
+void MapDockPanel::loadDetectedCurves()
+{
+  refreshCurveCombos();
+  autoDetectCurves(/*force_overwrite=*/true);
+  requestSelectedCurveLoad();
+  refreshCurveCombos();
 }
 
 QDomElement MapDockPanel::xmlSaveState(QDomDocument& doc) const
@@ -143,6 +175,7 @@ QDomElement MapDockPanel::xmlSaveState(QDomDocument& doc) const
   auto el = doc.createElement("map_panel");
   el.setAttribute("lat_curve", _lat_combo->currentText());
   el.setAttribute("lon_curve", _lon_combo->currentText());
+  el.setAttribute("trail_length_sec", _trail_length_slider->value());
   return el;
 }
 
@@ -150,6 +183,11 @@ bool MapDockPanel::xmlLoadState(const QDomElement& element)
 {
   _pending_lat_curve = element.attribute("lat_curve");
   _pending_lon_curve = element.attribute("lon_curve");
+  if (element.hasAttribute("trail_length_sec"))
+  {
+    _trail_length_slider->setValue(element.attribute("trail_length_sec").toInt());
+    updateTrailLengthLabel();
+  }
   applyPendingSelection();
   selectionChanged();
   return true;
@@ -159,6 +197,7 @@ void MapDockPanel::onTimeUpdated(double absolute_time)
 {
   _has_time = true;
   _last_time = absolute_time;
+  _route_dirty = true;
 #if PJ_HAS_WEBENGINE
   updateMarkerOnMap(absolute_time);
 #endif
@@ -255,6 +294,30 @@ void MapDockPanel::autoDetectCurves(bool force_overwrite)
   }
 }
 
+void MapDockPanel::requestSelectedCurveLoad()
+{
+  QStringList curve_names;
+
+  auto addIfValid = [&](const QString& curve_name) {
+    if (curve_name.isEmpty() || curve_names.contains(curve_name))
+    {
+      return;
+    }
+    if (_plot_data.numeric.find(curve_name.toStdString()) != _plot_data.numeric.end())
+    {
+      curve_names.push_back(curve_name);
+    }
+  };
+
+  addIfValid(_lat_combo->currentText());
+  addIfValid(_lon_combo->currentText());
+
+  if (!curve_names.isEmpty())
+  {
+    emit curvesLoadRequested(curve_names);
+  }
+}
+
 void MapDockPanel::selectionChanged()
 {
   _fit_route_once = true;
@@ -312,8 +375,7 @@ void MapDockPanel::showContextMenu(const QPoint& pos)
 
   if (selected_action == fit_action)
   {
-    refreshCurveCombos();
-    autoDetectCurves(/*force_overwrite=*/true);
+    loadDetectedCurves();
     selectionChanged();
     zoomToRoute();
     return;
@@ -363,6 +425,18 @@ void MapDockPanel::applyPendingSelection()
   _pending_lon_curve.clear();
 }
 
+void MapDockPanel::updateTrailLengthLabel()
+{
+  const int seconds = _trail_length_slider->value();
+  if (seconds <= 0)
+  {
+    _trail_length_label->setText("All past");
+    return;
+  }
+
+  _trail_length_label->setText(QString("%1 s").arg(seconds));
+}
+
 void MapDockPanel::updateRouteOnMap()
 {
 #if PJ_HAS_WEBENGINE
@@ -384,10 +458,24 @@ void MapDockPanel::updateRouteOnMap()
   const auto sample_count = std::min(lat_series->size(), lon_series->size());
   points = QJsonArray();
 
+  const double max_time =
+      _has_time ? _last_time : std::numeric_limits<double>::infinity();
+  const int trail_length_sec = _trail_length_slider->value();
+  const double min_time =
+      (_has_time && trail_length_sec > 0) ?
+          (_last_time - static_cast<double>(trail_length_sec)) :
+          -std::numeric_limits<double>::infinity();
+
   for (size_t i = 0; i < sample_count; i++)
   {
     const auto& lat_pt = (*lat_series)[i];
     const auto& lon_pt = (*lon_series)[i];
+    const double point_time = std::max(lat_pt.x, lon_pt.x);
+
+    if (!std::isfinite(point_time) || point_time > max_time || point_time < min_time)
+    {
+      continue;
+    }
 
     if (!std::isfinite(lat_pt.y) || !std::isfinite(lon_pt.y))
     {
@@ -412,7 +500,6 @@ void MapDockPanel::updateRouteOnMap()
   _web_view->page()->runJavaScript(js);
   _fit_route_once = false;
   _route_dirty = false;
-  setStatus(QString("Route points: %1").arg(points.size()));
 #endif
 }
 
@@ -547,13 +634,25 @@ QString MapDockPanel::mapHtml()
           attribution: tileAttribution
         }).addTo(pjMap);
       }
-      pjRoute = L.polyline([], { weight: 3 }).addTo(pjMap);
-      pjMarker = L.circleMarker([0, 0], { radius: 6 }).addTo(pjMap);
+      pjRoute = L.polyline([], {
+        color: '#2563eb',
+        weight: 3,
+        opacity: 0.85
+      }).addTo(pjMap);
+      pjMarker = L.circleMarker([0, 0], {
+        radius: 7,
+        color: '#ffffff',
+        weight: 2,
+        fillColor: '#dc2626',
+        fillOpacity: 0.95
+      }).addTo(pjMap);
+      pjMarker.bringToFront();
     }
 
     window.pj_setRoute = function(points, fitBounds) {
       ensureMap();
       pjRoute.setLatLngs(points || []);
+      pjMarker.bringToFront();
       if (fitBounds) {
         window.pj_fitRoute();
       }
@@ -575,6 +674,7 @@ QString MapDockPanel::mapHtml()
     window.pj_setPosition = function(lat, lon) {
       ensureMap();
       pjMarker.setLatLng([lat, lon]);
+      pjMarker.bringToFront();
     }
 
     ensureMap();

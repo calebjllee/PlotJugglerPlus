@@ -89,6 +89,8 @@ public slots:
 
   void onPlotAdded(PlotWidget* plot);
 
+  void onMapPanelAdded(MapDockPanel* panel);
+
   void onPlotTabAdded(PlotDocker* docker);
 
   void onPlotZoomChanged(PlotWidget* modified_plot, QRectF new_range);
@@ -262,6 +264,7 @@ private:
 
   void updateTimeSlider();
   void updateTimeOffset();
+  void updatePlaybackButtonIcon();
 
   void buildDummyData();
 
