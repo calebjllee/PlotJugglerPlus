@@ -112,6 +112,8 @@ PlotWidget::PlotWidget(PlotDataMapRef& datamap, QWidget* parent)
   //-------------------------
 
   buildActions();
+  zoomer()->setXOnlyZoom(true);
+  magnifier()->setDefaultMode(PlotMagnifier::X_AXIS);
 
   _custom_Y_limits_left.min = (-MAX_DOUBLE);
   _custom_Y_limits_left.max = (MAX_DOUBLE);
@@ -1086,6 +1088,14 @@ void PlotWidget::setZoomRectangle(QRectF rect, bool emit_signal)
   {
     rescaleEqualAxisScaling();
   }
+  else if (!isXYPlot())
+  {
+    const double left = std::min(rect.left(), rect.right());
+    const double right = std::max(rect.left(), rect.right());
+    setAxisScale(QwtPlot::xBottom, left, right);
+    applyAutoFitY({ left, right });
+    qwtPlot()->updateAxes();
+  }
   else
   {
     setAxisScale(QwtPlot::yLeft, rect.bottom(), rect.top());
@@ -1101,7 +1111,7 @@ void PlotWidget::setZoomRectangle(QRectF rect, bool emit_signal)
     }
     else
     {
-      emit rectChanged(this, rect);
+      emit rectChanged(this, currentBoundingRect());
     }
   }
   updateStatistics();
@@ -1282,6 +1292,97 @@ Range PlotWidget::getVisualizationRangeY(Range range_X, QwtAxisId y_axis) const
   return Range({ bottom, top });
 }
 
+Range PlotWidget::autoFitRangeY(Range range_X, QwtAxisId y_axis) const
+{
+  double bottom = std::numeric_limits<double>::max();
+  double top = std::numeric_limits<double>::lowest();
+
+  for (auto& it : curveList())
+  {
+    if (!it.curve->isVisible() || it.curve->yAxis() != y_axis)
+    {
+      continue;
+    }
+
+    auto series = dynamic_cast<QwtSeriesWrapper*>(it.curve->data());
+    if (!series)
+    {
+      continue;
+    }
+
+    auto max_range_X = series->getVisualizationRangeX();
+    if (!max_range_X)
+    {
+      continue;
+    }
+
+    double left = std::max(max_range_X->min, range_X.min);
+    double right = std::min(max_range_X->max, range_X.max);
+    if (left > right)
+    {
+      continue;
+    }
+
+    left = std::nextafter(left, right);
+    right = std::nextafter(right, left);
+
+    auto range_Y = series->getVisualizationRangeY({ left, right });
+    if (!range_Y)
+    {
+      continue;
+    }
+
+    bottom = std::min(bottom, range_Y->min);
+    top = std::max(top, range_Y->max);
+  }
+
+  double margin = 0.1;
+  if (bottom > top)
+  {
+    bottom = 0.0;
+    top = 0.0;
+  }
+  else if (top - bottom > std::numeric_limits<double>::epsilon())
+  {
+    margin = (top - bottom) * 0.125;
+  }
+
+  bottom -= margin;
+  top += margin;
+
+  const auto& custom_limits =
+      (y_axis == QwtPlot::yRight) ? _custom_Y_limits_right : _custom_Y_limits_left;
+
+  if (custom_limits.min > -MAX_DOUBLE)
+  {
+    bottom = custom_limits.min;
+    if (top < bottom)
+    {
+      top = bottom;
+    }
+  }
+
+  if (custom_limits.max < MAX_DOUBLE)
+  {
+    top = custom_limits.max;
+    if (top < bottom)
+    {
+      bottom = top;
+    }
+  }
+
+  return Range({ bottom, top });
+}
+
+void PlotWidget::applyAutoFitY(Range range_X)
+{
+  auto rangeY_left = autoFitRangeY(range_X, QwtPlot::yLeft);
+  auto rangeY_right = autoFitRangeY(range_X, QwtPlot::yRight);
+
+  setAxisScale(QwtPlot::yLeft, rangeY_left.min, rangeY_left.max);
+  setAxisScale(QwtPlot::yRight, rangeY_right.min, rangeY_right.max);
+}
+
 void PlotWidget::updateCurves(bool reset_older_data)
 {
   for (auto& it : curveList())
@@ -1339,17 +1440,14 @@ void PlotWidget::onFlipAxis()
   {
     QRectF canvas_rect = qwtPlot()->canvas()->contentsRect();
     const QwtScaleMap xMap = qwtPlot()->canvasMap(QwtPlot::xBottom);
-    const QwtScaleMap yMap = qwtPlot()->canvasMap(QwtPlot::yLeft);
     canvas_rect = canvas_rect.normalized();
     double x1 = xMap.invTransform(canvas_rect.left());
     double x2 = xMap.invTransform(canvas_rect.right());
-    double y1 = yMap.invTransform(canvas_rect.bottom());
-    double y2 = yMap.invTransform(canvas_rect.top());
     // flip will be done inside the function setAxisScale()
-    setAxisScale(QwtPlot::yLeft, y1, y2);
-    setAxisScale(QwtPlot::xBottom, x1, x2);
-    qwtPlot()->updateAxes();
-    replot();
+    QRectF rect = currentBoundingRect();
+    rect.setLeft(x1);
+    rect.setRight(x2);
+    setZoomRectangle(rect, false);
   }
   emit undoableChange();
 }
@@ -1470,13 +1568,18 @@ void PlotWidget::onShowDataStatistics()
 
 void PlotWidget::on_externallyResized(const QRectF& rect)
 {
-  QRectF current_rect = currentBoundingRect();
-  if (current_rect == rect)
+  if (!isXYPlot())
   {
+    setZoomRectangle(rect, false);
+    if (isZoomLinkEnabled())
+    {
+      emit rectChanged(this, currentBoundingRect());
+    }
     return;
   }
 
-  if (!isXYPlot() && isZoomLinkEnabled())
+  QRectF current_rect = currentBoundingRect();
+  if (current_rect != rect && isZoomLinkEnabled())
   {
     emit rectChanged(this, rect);
   }
@@ -1493,11 +1596,12 @@ void PlotWidget::zoomOut(bool emit_signal)
   updateMaximumZoomArea();
 
   setZoomRectangle(maxZoomRect(), emit_signal);
-  auto rect = currentBoundingRect();
-  auto rangeY_right = getVisualizationRangeY({ rect.left(), rect.right() }, QwtPlot::yRight);
-  setAxisScale(QwtPlot::yRight, rangeY_right.min, rangeY_right.max);
-  qwtPlot()->updateAxes();
   replot();
+}
+
+void PlotWidget::resetZoom()
+{
+  zoomOut(false);
 }
 
 void PlotWidget::on_zoomOutHorizontal_triggered(bool emit_signal)
@@ -1513,15 +1617,8 @@ void PlotWidget::on_zoomOutHorizontal_triggered(bool emit_signal)
 
 void PlotWidget::on_zoomOutVertical_triggered(bool emit_signal)
 {
-  updateMaximumZoomArea();
   QRectF rect = currentBoundingRect();
-  auto rangeY_left = getVisualizationRangeY({ rect.left(), rect.right() });
-  auto rangeY_right = getVisualizationRangeY({ rect.left(), rect.right() }, QwtPlot::yRight);
-
-  rect.setBottom(rangeY_left.min);
-  rect.setTop(rangeY_left.max);
   this->setZoomRectangle(rect, emit_signal);
-  setAxisScale(QwtPlot::yRight, rangeY_right.min, rangeY_right.max);
   qwtPlot()->updateAxes();
 }
 
@@ -1532,6 +1629,9 @@ void PlotWidget::setModeXY(bool enable)
     return;
   }
   PlotWidgetBase::setModeXY(enable);
+
+  zoomer()->setXOnlyZoom(!enable);
+  magnifier()->setDefaultMode(enable ? PlotMagnifier::BOTH_AXES : PlotMagnifier::X_AXIS);
 
   enableTracker(!enable);
 

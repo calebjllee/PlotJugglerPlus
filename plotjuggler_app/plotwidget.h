@@ -58,6 +58,8 @@ public:
 
   void setZoomRectangle(QRectF rect, bool emit_signal);
 
+  void resetZoom() override;
+
   void reloadPlotData();
 
   double timeOffset() const
@@ -265,6 +267,8 @@ private:
 
   // void updateMaximumZoomArea();
   void rescaleEqualAxisScaling();
+  Range autoFitRangeY(Range range_X, QwtAxisId y_axis) const;
+  void applyAutoFitY(Range range_X);
 
   void setAxisScale(QwtAxisId axisId, double min, double max);
 };

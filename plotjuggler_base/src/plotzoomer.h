@@ -12,6 +12,8 @@
 #include <QDebug>
 #include "qwt_plot_zoomer.h"
 
+class QWidget;
+
 class PlotZoomer : public QwtPlotZoomer
 {
 public:
@@ -26,21 +28,30 @@ public:
     _keep_aspect_ratio = doKeep;
   }
 
+  void setXOnlyZoom(bool x_only);
+
 protected:
   virtual void widgetMousePressEvent(QMouseEvent* event) override;
   virtual void widgetMouseReleaseEvent(QMouseEvent* event) override;
   virtual void widgetMouseMoveEvent(QMouseEvent* event) override;
   virtual bool accept(QPolygon&) const override;
+  virtual void drawRubberBand(QPainter* painter) const override;
+  virtual QRegion rubberBandMask() const override;
 
   virtual void zoom(const QRectF& rect) override;
 
   virtual QSizeF minZoomSize() const override;
 
 private:
+  void updateXOnlyBand(bool visible);
+
   bool _mouse_pressed;
   bool _zoom_enabled;
   bool _keep_aspect_ratio;
+  bool _x_only_zoom;
   QPoint _initial_pos;
+  QPoint _current_pos;
+  QWidget* _x_only_band = nullptr;
 };
 
 #endif  // PLOTZOOMER_H
