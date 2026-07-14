@@ -154,6 +154,42 @@ void PlotWidget::setContextMenuEnabled(bool enabled)
   _context_menu_enabled = enabled;
 }
 
+void PlotWidget::setBottomAxisVisible(bool visible)
+{
+  if (qwtPlot()->isAxisVisible(QwtPlot::xBottom) == visible)
+  {
+    return;
+  }
+
+  qwtPlot()->setAxisVisible(QwtPlot::xBottom, visible);
+  qwtPlot()->updateAxes();
+  replot();
+}
+
+double PlotWidget::yAxisExtent(QwtAxisId axisId) const
+{
+  auto scale_draw = qwtPlot()->axisScaleDraw(axisId);
+  auto scale_widget = qwtPlot()->axisWidget(axisId);
+  if (!scale_draw || !scale_widget)
+  {
+    return 0.0;
+  }
+  return scale_draw->extent(scale_widget->font());
+}
+
+void PlotWidget::setYAxisMinimumExtent(QwtAxisId axisId, double extent)
+{
+  auto scale_draw = qwtPlot()->axisScaleDraw(axisId);
+  if (!scale_draw)
+  {
+    return;
+  }
+
+  scale_draw->setMinimumExtent(extent);
+  qwtPlot()->updateAxes();
+  replot();
+}
+
 void PlotWidget::buildActions()
 {
   QIcon iconDeleteList;
@@ -1077,6 +1113,7 @@ void PlotWidget::rescaleEqualAxisScaling()
   rect.moveCenter(max_rect.center());
 
   setAxisScale(QwtPlot::yLeft, rect.bottom(), rect.top());
+  setAxisScale(QwtPlot::yRight, rect.bottom(), rect.top());
   setAxisScale(QwtPlot::xBottom, rect.left(), rect.right());
   qwtPlot()->updateAxes();
   replot();
@@ -1099,6 +1136,7 @@ void PlotWidget::setZoomRectangle(QRectF rect, bool emit_signal)
   else
   {
     setAxisScale(QwtPlot::yLeft, rect.bottom(), rect.top());
+    setAxisScale(QwtPlot::yRight, rect.bottom(), rect.top());
     setAxisScale(QwtPlot::xBottom, rect.left(), rect.right());
     qwtPlot()->updateAxes();
   }
@@ -1377,10 +1415,24 @@ Range PlotWidget::autoFitRangeY(Range range_X, QwtAxisId y_axis) const
 void PlotWidget::applyAutoFitY(Range range_X)
 {
   auto rangeY_left = autoFitRangeY(range_X, QwtPlot::yLeft);
-  auto rangeY_right = autoFitRangeY(range_X, QwtPlot::yRight);
+  auto rangeY_right =
+      hasVisibleRightAxisCurves() ? autoFitRangeY(range_X, QwtPlot::yRight) : rangeY_left;
 
   setAxisScale(QwtPlot::yLeft, rangeY_left.min, rangeY_left.max);
   setAxisScale(QwtPlot::yRight, rangeY_right.min, rangeY_right.max);
+}
+
+bool PlotWidget::hasVisibleRightAxisCurves() const
+{
+  for (const auto& curve_info : curveList())
+  {
+    if (curve_info.curve && curve_info.curve->isVisible() &&
+        curve_info.curve->yAxis() == QwtPlot::yRight)
+    {
+      return true;
+    }
+  }
+  return false;
 }
 
 void PlotWidget::updateCurves(bool reset_older_data)

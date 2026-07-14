@@ -446,7 +446,7 @@ PlotWidgetBase::PlotWidgetBase(QWidget* parent) : _xy_mode(false), _keep_aspect_
   qwtPlot()->setAxisScale(QwtPlot::xBottom, 0.0, 1.0);
   qwtPlot()->setAxisScale(QwtPlot::yLeft, 0.0, 1.0);
   qwtPlot()->setAxisScale(QwtPlot::yRight, 0.0, 1.0);
-  qwtPlot()->setAxisVisible(QwtPlot::yRight, false);
+  qwtPlot()->setAxisVisible(QwtPlot::yRight, true);
 }
 
 PlotWidgetBase::~PlotWidgetBase()
@@ -1061,17 +1061,7 @@ void PlotWidgetBase::updateMaximumZoomArea()
 
 void PlotWidgetBase::updateRightAxisVisibility()
 {
-  bool visible_right_axis = false;
-  for (const auto& curve_info : p->curve_list)
-  {
-    if (curve_info.curve && curve_info.curve->isVisible() &&
-        curve_info.curve->yAxis() == QwtPlot::yRight)
-    {
-      visible_right_axis = true;
-      break;
-    }
-  }
-  qwtPlot()->setAxisVisible(QwtPlot::yRight, visible_right_axis);
+  qwtPlot()->setAxisVisible(QwtPlot::yRight, true);
 }
 
 void PlotWidgetBase::setLineWidth(LineWidth width)

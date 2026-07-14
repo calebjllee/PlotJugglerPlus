@@ -16,6 +16,28 @@
 #include "qwt_plot_curve.h"
 #include "qwt_text.h"
 
+namespace
+{
+QString legendDisplayName(QString title)
+{
+  const int slash_pos = title.lastIndexOf('/');
+  const int backslash_pos = title.lastIndexOf('\\');
+  const int separator_pos = std::max(slash_pos, backslash_pos);
+  if (separator_pos >= 0 && separator_pos + 1 < title.size())
+  {
+    return title.mid(separator_pos + 1);
+  }
+  return title;
+}
+
+QwtText legendDisplayText(const QwtText& text)
+{
+  QwtText display_text(text);
+  display_text.setText(legendDisplayName(text.text()));
+  return display_text;
+}
+}  // namespace
+
 PlotLegend::PlotLegend(QwtPlot* parent) : _parent_plot(parent), _collapsed(false)
 {
   setRenderHint(QwtPlotItem::RenderAntialiased);
@@ -57,7 +79,7 @@ PlotLegend::LayoutData PlotLegend::computeLayout(const QRectF& canvas_rect) cons
       axis_side = curve->yAxis();
     }
 
-    const int title_width = fm.horizontalAdvance(item->title().text());
+    const int title_width = fm.horizontalAdvance(legendDisplayName(item->title().text()));
     if (axis_side == QwtPlot::yRight)
     {
       right_items.push_back(item);
@@ -236,7 +258,7 @@ void PlotLegend::draw(QPainter* painter, const QwtScaleMap& xMap, const QwtScale
         titleOff += icon_rect.width() + spacing();
       }
 
-      const QwtText text = data.title();
+      const QwtText text = legendDisplayText(data.title());
       if (!text.isEmpty())
       {
         painter->save();
@@ -334,7 +356,7 @@ void PlotLegend::drawLegendData(QPainter* painter, const QwtPlotItem* plotItem,
     titleOff += iconRect.width() + spacing();
   }
 
-  const QwtText text = data.title();
+  const QwtText text = legendDisplayText(data.title());
   if (!text.isEmpty())
   {
     auto pen = textPen();

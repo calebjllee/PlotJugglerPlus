@@ -55,6 +55,7 @@ signals:
 class PlotDocker : public ads::CDockManager
 {
   Q_OBJECT
+  friend class DockWidget;
 
 public:
   PlotDocker(QString name, PlotDataMapRef& datamap, QWidget* parent = nullptr);
@@ -80,6 +81,8 @@ public:
 
   void replot();
 
+  void refreshSharedTimeAxes();
+
 public slots:
 
   void on_stylesheetChanged(QString theme);
@@ -87,6 +90,8 @@ public slots:
   void savePlotsToFile();
 
 private:
+  void registerPlotWidget(PlotWidget* plot_widget);
+
   void restoreSplitter(QDomElement elem, DockWidget* widget);
 
   QRect plotRelativeFootprint(int index, QSize plot_size) const;

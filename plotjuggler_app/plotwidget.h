@@ -96,6 +96,10 @@ public:
 
   void changeDots(bool force_dots);
 
+  void setBottomAxisVisible(bool visible);
+  double yAxisExtent(QwtAxisId axisId) const;
+  void setYAxisMinimumExtent(QwtAxisId axisId, double extent);
+
 protected:
   PlotDataMapRef& _mapped_data;
 
@@ -269,6 +273,7 @@ private:
   void rescaleEqualAxisScaling();
   Range autoFitRangeY(Range range_X, QwtAxisId y_axis) const;
   void applyAutoFitY(Range range_X);
+  bool hasVisibleRightAxisCurves() const;
 
   void setAxisScale(QwtAxisId axisId, double min, double max);
 };

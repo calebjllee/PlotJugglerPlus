@@ -15,6 +15,7 @@
 #include <QDebug>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <vector>
 #include "PlotJuggler/svg_util.h"
 
 class SplittableComponentsFactory : public ads::CDockComponentsFactory
@@ -27,6 +28,71 @@ public:
     return title_bar;
   }
 };
+
+namespace
+{
+void collectPlotWidgets(QWidget* widget, std::vector<PlotWidget*>& plots)
+{
+  if (auto splitter = qobject_cast<QSplitter*>(widget))
+  {
+    for (int i = 0; i < splitter->count(); i++)
+    {
+      collectPlotWidgets(splitter->widget(i), plots);
+    }
+    return;
+  }
+
+  if (auto dock_area = qobject_cast<ads::CDockAreaWidget*>(widget))
+  {
+    if (auto dock_widget = dynamic_cast<DockWidget*>(dock_area->currentDockWidget()))
+    {
+      if (auto plot_widget = dock_widget->plotWidget())
+      {
+        plots.push_back(plot_widget);
+      }
+    }
+  }
+}
+
+void applySharedTimeAxes(QWidget* widget)
+{
+  auto splitter = qobject_cast<QSplitter*>(widget);
+  if (!splitter)
+  {
+    return;
+  }
+
+  if (splitter->orientation() == Qt::Vertical)
+  {
+    std::vector<PlotWidget*> stacked_plots;
+    collectPlotWidgets(splitter, stacked_plots);
+
+    double left_extent = 0.0;
+    double right_extent = 0.0;
+    for (auto plot : stacked_plots)
+    {
+      left_extent = std::max(left_extent, plot->yAxisExtent(QwtPlot::yLeft));
+      right_extent = std::max(right_extent, plot->yAxisExtent(QwtPlot::yRight));
+    }
+
+    for (auto plot : stacked_plots)
+    {
+      plot->setYAxisMinimumExtent(QwtPlot::yLeft, left_extent);
+      plot->setYAxisMinimumExtent(QwtPlot::yRight, right_extent);
+    }
+
+    for (size_t i = 0; i + 1 < stacked_plots.size(); i++)
+    {
+      stacked_plots[i]->setBottomAxisVisible(false);
+    }
+  }
+
+  for (int i = 0; i < splitter->count(); i++)
+  {
+    applySharedTimeAxes(splitter->widget(i));
+  }
+}
+}  // namespace
 
 PlotDocker::PlotDocker(QString name, PlotDataMapRef& datamap, QWidget* parent)
   : ads::CDockManager(parent), _name(name), _datamap(datamap)
@@ -41,9 +107,10 @@ PlotDocker::PlotDocker(QString name, PlotDataMapRef& datamap, QWidget* parent)
       auto area = addDockWidget(ads::TopDockWidgetArea, widget);
       area->setAllowedAreas(ads::OuterDockAreas);
 
-      this->plotWidgetAdded(widget->plotWidget());
+      registerPlotWidget(widget->plotWidget());
 
       connect(widget, &DockWidget::undoableChange, this, &PlotDocker::undoableChange);
+      refreshSharedTimeAxes();
     }
   };
 
@@ -249,12 +316,25 @@ bool PlotDocker::xmlLoadState(QDomElement& tab_element)
   {
     show();
   }
+  refreshSharedTimeAxes();
   return true;
 }
 
 int PlotDocker::plotCount() const
 {
   return dockAreaCount();
+}
+
+void PlotDocker::registerPlotWidget(PlotWidget* plot_widget)
+{
+  if (!plot_widget)
+  {
+    return;
+  }
+
+  connect(plot_widget, &PlotWidget::rectChanged, this,
+          [this](PlotWidget*, QRectF) { refreshSharedTimeAxes(); });
+  emit plotWidgetAdded(plot_widget);
 }
 
 PlotWidget* PlotDocker::plotAt(int index)
@@ -293,6 +373,26 @@ void PlotDocker::replot()
     {
       plot->replot();
     }
+  }
+}
+
+void PlotDocker::refreshSharedTimeAxes()
+{
+  for (auto container : dockContainers())
+  {
+    std::vector<PlotWidget*> plots;
+    collectPlotWidgets(container->rootSplitter(), plots);
+    for (auto plot : plots)
+    {
+      plot->setBottomAxisVisible(true);
+      plot->setYAxisMinimumExtent(QwtPlot::yLeft, 0.0);
+      plot->setYAxisMinimumExtent(QwtPlot::yRight, 0.0);
+    }
+  }
+
+  for (auto container : dockContainers())
+  {
+    applySharedTimeAxes(container->rootSplitter());
   }
 }
 
@@ -410,6 +510,7 @@ DockWidget::DockWidget(PlotDataMapRef& datamap, QWidget* parent)
   QObject::connect(_toolbar->buttonFullscreen(), &QPushButton::clicked, FullscreenAction);
 
   QObject::connect(_toolbar->buttonClose(), &QPushButton::pressed, [this]() {
+    PlotDocker* parent_docker = static_cast<PlotDocker*>(dockManager());
     dockAreaWidget()->closeArea();
     takeWidget();
     if (_plot_widget)
@@ -423,6 +524,10 @@ DockWidget::DockWidget(PlotDataMapRef& datamap, QWidget* parent)
       _map_panel = nullptr;
     }
     this->undoableChange();
+    if (parent_docker)
+    {
+      parent_docker->refreshSharedTimeAxes();
+    }
   });
 
   this->layout()->setMargin(10);
@@ -442,10 +547,11 @@ DockWidget* DockWidget::splitHorizontal()
 
   area->setAllowedAreas(ads::OuterDockAreas);
 
-  parent_docker->plotWidgetAdded(new_widget->plotWidget());
+  parent_docker->registerPlotWidget(new_widget->plotWidget());
 
   connect(this, &DockWidget::undoableChange, parent_docker, &PlotDocker::undoableChange);
 
+  parent_docker->refreshSharedTimeAxes();
   this->undoableChange();
 
   return new_widget;
@@ -460,10 +566,11 @@ DockWidget* DockWidget::splitVertical()
   auto area = parent_docker->addDockWidget(ads::BottomDockWidgetArea, new_widget, dockAreaWidget());
 
   area->setAllowedAreas(ads::OuterDockAreas);
-  parent_docker->plotWidgetAdded(new_widget->plotWidget());
+  parent_docker->registerPlotWidget(new_widget->plotWidget());
 
   connect(this, &DockWidget::undoableChange, parent_docker, &PlotDocker::undoableChange);
 
+  parent_docker->refreshSharedTimeAxes();
   this->undoableChange();
 
   return new_widget;
@@ -515,6 +622,10 @@ void DockWidget::convertToMapPanel()
   }
 
   _toolbar->label()->setText("Map");
+  if (auto parent_docker = static_cast<PlotDocker*>(dockManager()))
+  {
+    parent_docker->refreshSharedTimeAxes();
+  }
   undoableChange();
 }
 
